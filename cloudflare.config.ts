@@ -1,0 +1,36 @@
+import { bindings, defineConfig } from "cf/config";
+
+// `--mode development` serves the OAuth flow from wrangler dev's localhost origin.
+export default defineConfig(({ mode }) => ({
+	accountId: "d93c650f72e597f96785abba389b0ce4",
+	worker: {
+		name: "garmin-mcp",
+		compatibilityDate: "2026-10-21",
+		compatibilityFlags: [
+			"nodejs_compat",
+			"global_fetch_strictly_public",
+		],
+		entrypoint: "src/index.ts",
+		workersDev: true,
+		previewUrls: false,
+		observability: {
+			enabled: true,
+			logs: {
+				enabled: true,
+				invocationLogs: false,
+			},
+			traces: {
+				enabled: true,
+				headSamplingRate: 0.01,
+			},
+		},
+		env: {
+			PUBLIC_URL: bindings.text(
+				mode === "development" ? "http://localhost:8787" : "https://garmin-mcp.aranlucas.workers.dev",
+			),
+			OAUTH_KV: bindings.kv({
+				id: "799457c018b64f86a7b950b907a7118c",
+			}),
+		},
+	},
+}));
