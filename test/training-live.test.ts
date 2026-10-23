@@ -15,6 +15,7 @@ import { required } from "./support";
 // The private session file is prepared through the real browser OAuth flow, outside the repository.
 const sessionSchema = z.object({
   base: z.url(),
+  issuer: z.url(),
   clientId: z.string().min(1),
   refreshToken: z.string().min(1),
 });
@@ -89,9 +90,9 @@ async function cleanup(
 it("verifies live OAuth refresh and the complete Garmin workout/calendar lifecycle over MCP HTTP", async () => {
   const sessionPath = required(process.env.GARMIN_E2E_SESSION_FILE, "GARMIN_E2E_SESSION_FILE");
   const session = sessionSchema.parse(JSON.parse(await readFile(sessionPath, "utf8")));
-  const resource = `${session.base}/training/mcp`;
+  const resource = `${session.base}/mcp`;
 
-  const tokenResponse = await fetch(`${session.base}/training/oauth/token`, {
+  const tokenResponse = await fetch(`${session.issuer}/oauth2/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     redirect: "error",
@@ -157,7 +158,47 @@ it("verifies live OAuth refresh and the complete Garmin workout/calendar lifecyc
 
   try {
     const listed = await client.listTools();
-    expect(listed.tools).toHaveLength(9);
+    expect(listed.tools).toHaveLength(12);
+
+    const readSchema = z.object({
+      data: z.object({
+        records: z.array(z.object({ summary: z.object({ summaryId: z.string() }) })),
+        hasMore: z.boolean(),
+      }),
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    // A successful empty result is valid on Starter: only post-link push data can be read.
+    await Promise.all(
+      ["dailies", "activities"].map(async (type) => {
+        const received = await client.callTool({
+          name: "list_garmin_summaries",
+          arguments: { type, startDate: today, endDate: today },
+        });
+
+        expect(received.isError).not.toBe(true);
+        const rows = readSchema.parse(received.structuredContent).data.records;
+
+        // The get path is exercised only when Garmin has delivered a record; mocked tests require records.
+        await Promise.all(
+          rows.slice(0, 1).map(async (row) => {
+            const detail = await client.callTool({
+              name: "get_garmin_summary",
+              arguments: { type, summaryId: row.summary.summaryId },
+            });
+
+            expect(detail.isError).not.toBe(true);
+            expect(
+              z
+                .object({ data: z.object({ summaryId: z.string() }) })
+                .parse(detail.structuredContent).data.summaryId,
+            ).toBe(row.summary.summaryId);
+          }),
+        );
+      }),
+    );
+
     const created = await client.callTool({ name: "create_workout", arguments: { workout } });
     expect(
       created.isError,
@@ -275,7 +316,7 @@ it("verifies live OAuth refresh and the complete Garmin workout/calendar lifecyc
     );
   }
 
-  const discovery = await fetch(`${session.base}/.well-known/oauth-authorization-server/training`);
+  const discovery = await fetch(`${session.issuer}/.well-known/oauth-authorization-server`);
   const metadata = authorizationMetadata.parse(await discovery.json());
 
   const revoked = await fetch(metadata.revocation_endpoint, {
@@ -291,10 +332,17 @@ it("verifies live OAuth refresh and the complete Garmin workout/calendar lifecyc
 
   expect(revoked.status).toBe(200);
 
-  const denied = await fetch(resource, {
+  // Auth access JWTs remain valid until their short expiry; refresh revocation is immediate.
+  const denied = await fetch(`${session.issuer}/oauth2/token`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${tokens.access_token}` },
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: session.clientId,
+      refresh_token: tokens.refresh_token,
+      resource,
+    }),
   });
 
-  expect(denied.status).toBe(401);
+  expect(denied.status).toBe(400);
 });

@@ -5,9 +5,6 @@ import type { WorkoutInput, ScheduleInput } from "./schemas";
 
 export const TRAINING_BASE = "https://apis.garmin.com";
 
-// Pin the hostname in Garmin's OAuth2PKCE 2.0 reference; never follow credential-bearing redirects.
-export const TRAINING_TOKEN_URL = "https://diauth.garmin.com/di-oauth2-service/oauth/token";
-
 export { TrainingError };
 
 type TrainingBody =
@@ -17,39 +14,6 @@ type TrainingBody =
   | (ScheduleInput & { scheduleId: number });
 
 type UserIdentity = { userId: string };
-
-const credential = z
-  .string()
-  .min(1)
-  .max(16_384)
-  .regex(/^[!-~]+$/);
-
-export const tokenSet = z.object({
-  accessToken: credential,
-  refreshToken: credential,
-  accessTokenExpiresAt: z.number().finite().positive(),
-  refreshTokenExpiresAt: z.number().finite().positive(),
-});
-
-export type TokenSet = z.infer<typeof tokenSet>;
-
-export type TrainingCredentials = { clientId: string; clientSecret: string };
-
-const tokenResponse = z.object({
-  access_token: credential,
-  refresh_token: credential,
-  token_type: z.string().regex(/^bearer$/i),
-  expires_in: z
-    .number()
-    .int()
-    .positive()
-    .max(366 * 86_400),
-  refresh_token_expires_in: z
-    .number()
-    .int()
-    .positive()
-    .max(366 * 86_400),
-});
 
 async function checkedFetch(
   url: string,
@@ -137,57 +101,6 @@ async function validatedJson<Output>(
       502,
     );
   }
-}
-
-async function exchangeToken(
-  config: TrainingCredentials,
-  params: Record<string, string>,
-): Promise<TokenSet> {
-  const now = Date.now();
-
-  const response = await checkedFetch(
-    TRAINING_TOKEN_URL,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
-        Authorization: `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString("base64")}`,
-      },
-      body: new URLSearchParams(params),
-    },
-    fetch,
-  );
-
-  const tokens = await validatedJson(tokenResponse, response, 64 * 1024);
-
-  return {
-    accessToken: tokens.access_token,
-    refreshToken: tokens.refresh_token,
-    accessTokenExpiresAt: now + tokens.expires_in * 1000,
-    refreshTokenExpiresAt: now + tokens.refresh_token_expires_in * 1000,
-  };
-}
-
-export function exchangeTrainingCode(
-  config: TrainingCredentials,
-  code: string,
-  verifier: string,
-  redirectUri: string,
-): Promise<TokenSet> {
-  return exchangeToken(config, {
-    grant_type: "authorization_code",
-    code,
-    code_verifier: verifier,
-    redirect_uri: redirectUri,
-  });
-}
-
-export function refreshTrainingToken(
-  config: TrainingCredentials,
-  refreshToken: string,
-): Promise<TokenSet> {
-  return exchangeToken(config, { grant_type: "refresh_token", refresh_token: refreshToken });
 }
 
 /** Request-local client; only fixed official Training API paths can be called. */

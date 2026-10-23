@@ -14,12 +14,7 @@ import {
   vi,
 } from "vitest";
 import * as z from "zod";
-import {
-  exchangeTrainingCode,
-  refreshTrainingToken,
-  TrainingClient,
-  TrainingError,
-} from "../src/training/client";
+import { TrainingClient, TrainingError } from "../src/training/client";
 import { createTrainingServer } from "../src/training/mcp";
 import {
   createWorkoutInput,
@@ -42,13 +37,6 @@ const accessToken = "fake-training-access-token-test-only";
 const privateValue = "fake-private-upstream-value-test-only";
 
 const permissionsUrl = "https://apis.garmin.com/partner-gateway/rest/user/permissions";
-
-const tokenUrl = "https://diauth.garmin.com/di-oauth2-service/oauth/token";
-
-const credentials = {
-  clientId: "fake-training-client-id-test-only",
-  clientSecret: "fake-training-client-secret-test-only",
-};
 
 // Fixtures follow Training API V2 2.0 sections 3–4 and OAuth2PKCE 2.0 section 8.
 const activeStep = {
@@ -97,14 +85,6 @@ const publishedWorkout = { ...workout, ownerId: 52, workoutId: 871 };
 const schedule = { workoutId: publishedWorkout.workoutId, date: "2026-10-25" };
 
 const publishedSchedule = { ...schedule, scheduleId: 472 };
-
-const tokenPayload = {
-  access_token: accessToken,
-  refresh_token: "fake-training-refresh-token-test-only",
-  token_type: "Bearer",
-  expires_in: 3600,
-  refresh_token_expires_in: 7_776_000,
-};
 
 function responses(...values: Response[]) {
   const fetcher = vi.fn<typeof fetch>();
@@ -655,26 +635,17 @@ describe("Training v2 contract regressions", () => {
     expect(scheduleWriteResponse.safeParse(Number.MAX_SAFE_INTEGER + 1).success).toBe(false);
   });
 
-  it("constructs supported Workers Requests for token and data calls without following redirects", async () => {
+  it("constructs supported Workers Requests for data calls without following redirects", async () => {
     const fetcher = vi.fn<typeof fetch>((input, init) => {
       const request = new Request(input, init);
       expect(request.redirect).toBe("manual");
 
-      return Promise.resolve(
-        Response.json(request.url === tokenUrl ? tokenPayload : publishedSchedule),
-      );
+      return Promise.resolve(Response.json(publishedSchedule));
     });
 
-    vi.stubGlobal("fetch", fetcher);
-    await exchangeTrainingCode(
-      credentials,
-      "test-code",
-      "v".repeat(64),
-      "https://mcp.example/training/callback",
-    );
     const client = new TrainingClient(accessToken, fetcher);
     expect(await client.getSchedule(scheduleResponse, 472)).toEqual(publishedSchedule);
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it("rejects legacy top-level steps and server-assigned create identifiers", () => {
@@ -828,115 +799,6 @@ describe("Training v2 contract regressions", () => {
       );
     },
   );
-});
-
-describe("Training upstream tokens", () => {
-  it("exchanges PKCE form fields and maps expiry durations, then replaces both tokens on refresh", async () => {
-    const now = 1_800_000_000_000;
-    vi.spyOn(Date, "now").mockReturnValue(now);
-
-    const rotated = {
-      ...tokenPayload,
-      access_token: "fake-rotated-training-access-test-only",
-      refresh_token: "fake-rotated-training-refresh-test-only",
-      expires_in: 1800,
-      refresh_token_expires_in: 86_400,
-    };
-
-    const fetcher = responses(Response.json(tokenPayload), Response.json(rotated));
-    vi.stubGlobal("fetch", fetcher);
-    const redirectUri = "https://mcp.example.test/training/callback";
-
-    const tokens = await exchangeTrainingCode(
-      credentials,
-      "fake-code+a&b",
-      "fake-pkce-verifier-test-only",
-      redirectUri,
-    );
-
-    expect(tokens).toEqual({
-      accessToken,
-      refreshToken: tokenPayload.refresh_token,
-      accessTokenExpiresAt: now + tokenPayload.expires_in * 1000,
-      refreshTokenExpiresAt: now + tokenPayload.refresh_token_expires_in * 1000,
-    });
-    expect(await refreshTrainingToken(credentials, tokens.refreshToken)).toEqual({
-      accessToken: rotated.access_token,
-      refreshToken: rotated.refresh_token,
-      accessTokenExpiresAt: now + rotated.expires_in * 1000,
-      refreshTokenExpiresAt: now + rotated.refresh_token_expires_in * 1000,
-    });
-    expect(fetcher).toHaveBeenCalledTimes(2);
-
-    const forms = fetcher.mock.calls.map(([input, init]) => {
-      expect(requestUrl(input)).toBe(tokenUrl);
-      expect(init?.method).toBe("POST");
-      expect(init?.redirect).toBe("manual");
-      expect(init?.signal).toBeInstanceOf(AbortSignal);
-      expect(new Headers(init?.headers).get("Content-Type")).toBe(
-        "application/x-www-form-urlencoded",
-      );
-      expect(new Headers(init?.headers).get("Authorization")).toBe(
-        `Basic ${Buffer.from(`${credentials.clientId}:${credentials.clientSecret}`).toString("base64")}`,
-      );
-
-      return Object.fromEntries(z.instanceof(URLSearchParams).parse(init?.body));
-    });
-
-    expect(forms).toEqual([
-      {
-        grant_type: "authorization_code",
-        code: "fake-code+a&b",
-        code_verifier: "fake-pkce-verifier-test-only",
-        redirect_uri: redirectUri,
-      },
-      {
-        grant_type: "refresh_token",
-        refresh_token: tokenPayload.refresh_token,
-      },
-    ]);
-  });
-
-  it.each([
-    { ...tokenPayload, access_token: "" },
-    { ...tokenPayload, access_token: "fake header\r\ninjection" },
-    { ...tokenPayload, access_token: "fake\u0000token" },
-    { ...tokenPayload, access_token: "fake\u0100token" },
-    { ...tokenPayload, refresh_token: "" },
-    { ...tokenPayload, token_type: "MAC" },
-    { ...tokenPayload, expires_in: -1 },
-    { ...tokenPayload, expires_in: "3600" },
-    { ...tokenPayload, refresh_token_expires_in: 0 },
-  ])("rejects malformed token payloads without exposing credentials: %j", async (payload) => {
-    const fetcher = responses(Response.json({ ...payload, privateValue }));
-    vi.stubGlobal("fetch", fetcher);
-    const request = refreshTrainingToken(credentials, tokenPayload.refresh_token);
-
-    await expect(request).rejects.toThrow("unrecognized response");
-    await expect(request).rejects.not.toThrow(privateValue);
-    await expect(request).rejects.not.toThrow(credentials.clientSecret);
-    expect(fetcher).toHaveBeenCalledOnce();
-  });
-
-  it("cancels token responses over 64 KiB", async () => {
-    const cancel = vi.fn();
-
-    const stream = new ReadableStream<Uint8Array>({
-      pull(controller) {
-        controller.enqueue(new Uint8Array(64 * 1024 + 1));
-      },
-      cancel,
-    });
-
-    const fetcher = responses(new Response(stream));
-    vi.stubGlobal("fetch", fetcher);
-
-    await expect(refreshTrainingToken(credentials, tokenPayload.refresh_token)).rejects.toThrow(
-      "unrecognized response",
-    );
-    expect(cancel).toHaveBeenCalledOnce();
-    expect(fetcher).toHaveBeenCalledOnce();
-  });
 });
 
 describe("Training schema boundaries", () => {
