@@ -436,7 +436,7 @@ describe("Training browser authorization", () => {
   it("escapes per-client consent and permits the browser redirect to Garmin", async () => {
     const consent = await startConsent("<script>untrusted</script>");
     expect(consent.body).not.toContain("<script>");
-    expect(consent.body).toContain("&#60;script&#62;");
+    expect(consent.body).toContain("&lt;script&gt;");
     expect(consent.body).toContain("localhost");
     expect(consent.body).toContain("app on your computer");
     expect(consent.body).toContain(scope);

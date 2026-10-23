@@ -11,10 +11,10 @@ import {
 } from "@cloudflare/workers-oauth-provider";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import * as z from "zod";
-import { consentFormAction, html } from "../auth";
+import { consentFormAction, html } from "../page-headers";
 import { readBounded } from "../garmin";
 import { GarminError } from "../garmin-error";
-import { escape } from "../pages";
+import { escapeToBuffer } from "hono/utils/html";
 import {
   exchangeTrainingCode,
   refreshTrainingToken,
@@ -55,6 +55,14 @@ export function isTrainingPath(path: string): boolean {
     path === "/.well-known/oauth-authorization-server/training" ||
     path === "/.well-known/oauth-protected-resource/training/mcp"
   );
+}
+
+// Adapt Hono's native escaping utility to the Training API's existing string templates.
+function escape(value: string): string {
+  const buffer = [""];
+  escapeToBuffer(value, buffer);
+
+  return buffer.join("");
 }
 
 function trainingPage(title: string, body: string): string {

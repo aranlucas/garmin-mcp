@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { consentFormAction } from "../src/auth";
-import { authorizationErrorPage, consentPage, home } from "../src/pages";
+import { renderToString } from "hono/jsx/dom/server";
+import { consentFormAction } from "../src/page-headers";
+import { ConsentPage } from "../src/pages/consent";
+import { AuthorizationErrorPage } from "../src/pages/errors";
+import { HomePage } from "../src/pages/home";
 import { required } from "./support";
 
 const client = {
@@ -22,13 +25,15 @@ describe("Consent pages", () => {
     );
   });
   it("escapes untrusted OAuth client information", () => {
-    const output = consentPage(
-      {
-        ...client,
-        clientName: "<script>alert(1)</script>",
-        scope: ["<script>"],
-      },
-      "handle",
+    const output = renderToString(
+      ConsentPage({
+        details: {
+          ...client,
+          clientName: "<script>alert(1)</script>",
+          scope: ["<script>"],
+        },
+        handle: "handle",
+      }),
     );
 
     expect(output).not.toContain("<script>");
@@ -38,15 +43,17 @@ describe("Consent pages", () => {
   it("escapes every consent value in text and attribute contexts", () => {
     const untrusted = '"><script>alert("test")</script>&';
 
-    const output = consentPage(
-      {
-        ...client,
-        clientName: untrusted,
-        clientDomain: untrusted,
-        redirectHost: untrusted,
-        scope: [untrusted],
-      },
-      untrusted,
+    const output = renderToString(
+      ConsentPage({
+        details: {
+          ...client,
+          clientName: untrusted,
+          clientDomain: untrusted,
+          redirectHost: untrusted,
+          scope: [untrusted],
+        },
+        handle: untrusted,
+      }),
     );
 
     expect(output).not.toContain("<script>");
@@ -57,7 +64,7 @@ describe("Consent pages", () => {
   });
 
   it("allows Personal API keys without whitespace through browser validation", () => {
-    const output = consentPage(client, "handle");
+    const output = renderToString(ConsentPage({ details: client, handle: "handle" }));
 
     const pattern = required(output.match(/pattern="([^"]+)"/)?.[1], "API key pattern");
 
@@ -71,7 +78,9 @@ describe("Consent pages", () => {
 
 describe("Page rendering", () => {
   it("keeps configured server URLs inside the read-only input value", () => {
-    const output = home('https://example.org/" autofocus onfocus="alert(1)');
+    const output = renderToString(
+      HomePage({ publicUrl: 'https://example.org/" autofocus onfocus="alert(1)' }),
+    );
 
     expect(output).toContain(
       'value="https://example.org/&quot; autofocus onfocus=&quot;alert(1)/mcp"',
@@ -80,7 +89,9 @@ describe("Page rendering", () => {
   });
 
   it("renders authorization error messages as escaped text", () => {
-    const output = authorizationErrorPage('<img src=x onerror="alert(1)">');
+    const output = renderToString(
+      AuthorizationErrorPage({ message: '<img src=x onerror="alert(1)">' }),
+    );
 
     expect(output).not.toContain("<img");
     expect(output).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
