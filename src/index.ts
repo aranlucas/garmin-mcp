@@ -2,7 +2,7 @@ import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { app } from "./app";
 import type { AppEnv } from "./auth";
 import { READ_SCOPE, WOMENS_SCOPE } from "./scopes";
-import { fetchTraining, isTrainingPath } from "./training/auth";
+import { isTrainingPath } from "./training/auth";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -33,7 +33,12 @@ export default {
 
     try {
       if (isTrainingPath(new URL(request.url).pathname)) {
-        return await fetchTraining(request, env, ctx);
+        // Gate before the app parses bodies or constructs Training OAuth handlers.
+        if (env.GARMIN_TRAINING_ENABLED !== "true") {
+          return new Response("Not found", { status: 404 });
+        }
+
+        return await app.fetch(request, env, ctx);
       }
 
       // SAFETY: OAuthProvider adds OAUTH_PROVIDER to env before it calls any handler.

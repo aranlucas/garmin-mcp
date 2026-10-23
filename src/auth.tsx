@@ -14,7 +14,7 @@ import { AuthorizationErrorPage, KeyErrorPage } from "./pages/errors";
 export type AppEnv = Env & { OAUTH_PROVIDER: OAuthHelpers };
 
 export type AppBindings = {
-  Bindings: AppEnv;
+  Bindings: Env;
   Variables: { formAction?: string; parsedBody?: unknown };
 };
 
@@ -23,7 +23,8 @@ export async function authorize(c: Context<AppBindings>) {
   const env = c.env;
 
   try {
-    const oauth = env.OAUTH_PROVIDER;
+    // SAFETY: OAuthProvider supplies this helper before dispatching /authorize.
+    const oauth = (env as AppEnv).OAUTH_PROVIDER;
 
     if (request.method === "GET") {
       const authRequest = await oauth.parseAuthRequest(request);

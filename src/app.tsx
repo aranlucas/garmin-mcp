@@ -10,6 +10,7 @@ import { htmlHeaders } from "./page-headers";
 import { HomePage } from "./pages/home";
 import { PrivacyPage } from "./pages/privacy";
 import { READ_SCOPE } from "./scopes";
+import { handleTraining } from "./training/auth";
 
 const grantProps = z.object({ apiKey: z.string() });
 
@@ -36,6 +37,17 @@ app.get("/privacy", (c) => c.render(<PrivacyPage />));
 app.get("/health", (c) => c.json({ status: "ok", service: "garmin-personal-mcp" }));
 
 app.all("/authorize", authorize);
+
+app.on(
+  "ALL",
+  [
+    "/training",
+    "/training/*",
+    "/.well-known/oauth-authorization-server/training",
+    "/.well-known/oauth-protected-resource/training/mcp",
+  ],
+  handleTraining,
+);
 
 app.all("/mcp", (c) => {
   // SAFETY: OAuthProvider dispatches this protected route with its documented resource context.

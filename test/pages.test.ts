@@ -4,6 +4,7 @@ import { consentFormAction } from "../src/page-headers";
 import { ConsentPage } from "../src/pages/consent";
 import { AuthorizationErrorPage } from "../src/pages/errors";
 import { HomePage } from "../src/pages/home";
+import { TrainingConsentPage } from "../src/pages/training";
 import { required } from "./support";
 
 const client = {
@@ -77,6 +78,28 @@ describe("Consent pages", () => {
 });
 
 describe("Page rendering", () => {
+  it("escapes Training consent values in both text and attributes", () => {
+    const untrusted = '"><script>alert("test")</script>&';
+
+    const output = renderToString(
+      TrainingConsentPage({
+        details: {
+          ...client,
+          clientName: untrusted,
+          clientDomain: untrusted,
+          redirectHost: untrusted,
+          scope: [untrusted],
+        },
+        handle: untrusted,
+      }),
+    );
+
+    expect(output).not.toContain("<script>");
+    expect(output).toContain("&lt;script&gt;");
+    expect(output).toContain('name="handle" value="&quot;&gt;&lt;script&gt;');
+    expect(output).toContain('action="/training/authorize"');
+  });
+
   it("keeps configured server URLs inside the read-only input value", () => {
     const output = renderToString(
       HomePage({ publicUrl: 'https://example.org/" autofocus onfocus="alert(1)' }),

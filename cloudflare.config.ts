@@ -10,7 +10,7 @@ export default defineConfig(({ mode, isPreview }) => ({
     compatibilityFlags: ["nodejs_compat", "global_fetch_strictly_public"],
     entrypoint: "src/index.ts",
     workersDev: true,
-    previewUrls: false,
+    previewUrls: true,
     observability: {
       enabled: true,
       logs: {
