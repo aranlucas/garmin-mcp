@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/server";
-import * as z from "zod";
+import type { ZodType } from "zod";
 import { endpoints } from "./endpoints";
 import { endpointPath, MAX_RANGE_DAYS, type ToolArguments } from "./tool-input";
 import { GarminClient } from "./garmin";
@@ -24,18 +24,14 @@ export function createServer(
       continue;
     }
 
-    const inputSchema: z.ZodType<ToolArguments> = endpoint.inputSchema;
-    const responseSchema: z.ZodType = endpoint.responseSchema;
+    const inputSchema: ZodType<ToolArguments> = endpoint.inputSchema;
+    const responseSchema: ZodType = endpoint.responseSchema;
 
     server.registerTool(
       endpoint.name,
       {
         description: `${endpoint.description} Source: Garmin Connect.`,
         inputSchema,
-        outputSchema: z.strictObject({
-          source: z.literal("Garmin Connect"),
-          data: responseSchema,
-        }),
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,

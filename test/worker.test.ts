@@ -333,7 +333,7 @@ describe("Cloudflare OAuth and MCP integration", () => {
     expect(list.tools.some((tool) => tool.name === "get_menstrual_summary")).toBe(false);
 
     for (const tool of list.tools) {
-      expect(tool.outputSchema, tool.name).toMatchObject({ type: "object" });
+      expect(tool, tool.name).not.toHaveProperty("outputSchema");
       expect(tool.annotations, tool.name).toMatchObject({
         readOnlyHint: true,
         destructiveHint: false,

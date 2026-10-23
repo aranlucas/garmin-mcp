@@ -10,7 +10,7 @@ Activity searches now validate the published favorite values and geographic coor
 
 The original Garmin adapter validated response bodies only as JSON and returned a union selected by a boolean argument. `GarminClient.get(schema, path, signal)` now infers and validates its response type from the supplied schema. `download(path, signal)` has a separate file return type. An internal schema-first fetch function handles the shared bounded JSON read. Following the user’s preference, this small implementation stays inline; `zod-fetch` is not a dependency.
 
-Every MCP tool now advertises an output schema and returns the same envelope in `structuredContent` and serialized text. The SDK handles protocol negotiation, input/output validation, and transport. Read-only annotations and consent-based tool exposure remain in place. MCP cancellation reaches both the Garmin token exchange and the data request. Upstream HTTP errors and response validation failures leave the application only as fixed, actionable messages; payloads and Zod issues are not logged or returned.
+Every MCP tool returns the same envelope in `structuredContent` and serialized text. Per the user's preference, response schemas stay inside the Garmin client rather than being advertised as MCP output schemas. The SDK handles protocol negotiation, input validation, and transport; the Garmin client validates upstream responses. Read-only annotations and consent-based tool exposure remain in place. MCP cancellation reaches both the Garmin token exchange and the data request. Upstream HTTP errors and response validation failures leave the application only as fixed, actionable messages; payloads and Zod issues are not logged or returned.
 
 TypeScript now checks indexed access, exact optional properties, overrides, switch fallthrough, and return paths in application code, configuration, and tests. Cookie parsing in the tests explicitly checks that the expected value exists. The main compiler is pinned to 7.1.0-beta, including the stricter checks; it has passed type checking with these changes.
 
@@ -42,7 +42,7 @@ Mocked tests cannot establish whether Garmin’s published models match every re
 
 ## Research sources
 
-- [MCP tools specification, 2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28/server/tools): structured content, output schemas, tool errors, and annotations. The implementation also retains a JSON text result for older clients.
+- [MCP tools specification, 2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28/server/tools): structured content, tool errors, and annotations. The implementation also retains a JSON text result for older clients.
 - [MCP TypeScript SDK cancellation guidance](https://ts.sdk.modelcontextprotocol.io/v2/servers/logging-progress-cancellation): pass the request’s cancellation signal into upstream work.
 - [Google’s code review guidance](https://google.github.io/eng-practices/review/reviewer/looking-for.html): review design and complexity, avoid speculative generality, and use comments to explain decisions.
 - [Google’s TypeScript style guide](https://google.github.io/styleguide/tsguide.html): prefer simple type constructs and justify type assertions. This audit applies that design guidance while retaining the repository’s own formatting rules.
