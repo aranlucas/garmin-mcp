@@ -1,7 +1,5 @@
 version: 2
 
-# GitHub documents pnpm support only through v10; this workspace uses pnpm 12.
-# Keep GitHub Actions updates grouped until Dependabot supports this pnpm version.
 multi-ecosystem-groups:
   weekly-dependencies:
     schedule:
@@ -13,6 +11,15 @@ multi-ecosystem-groups:
 
 updates:
   - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: thursday
+      time: "06:00"
+      timezone: America/Los_Angeles
+    patterns: ["*"]
+    multi-ecosystem-group: weekly-dependencies
+  - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
