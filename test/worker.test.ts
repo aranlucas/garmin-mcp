@@ -35,9 +35,13 @@ type ExpectedFetch = {
 
 const describedParameter = z.object({ description: z.string() });
 
-async function dispatch(path: string, init?: RequestInit): Promise<Response> {
+async function dispatch(
+  path: string,
+  init?: RequestInit,
+  origin: string = base,
+): Promise<Response> {
   const ctx = createExecutionContext();
-  const response = await worker.fetch(new Request(new URL(path, base), init), env, ctx);
+  const response = await worker.fetch(new Request(new URL(path, origin), init), env, ctx);
   await waitOnExecutionContext(ctx);
 
   return response;
@@ -194,6 +198,31 @@ afterEach(() => {
 });
 
 describe("Cloudflare OAuth and MCP integration", () => {
+  it.each([
+    "https://t3-shared-hono-app-garmin-mcp.aranlucas.workers.dev",
+    "https://c96c0f07-garmin-mcp.aranlucas.workers.dev",
+  ])("uses the request origin for pages and OAuth at %s", async (origin) => {
+    const landing = await dispatch("/", undefined, origin);
+
+    expect(landing.status).toBe(200);
+    expect(await landing.text()).toContain(`${origin}/mcp`);
+
+    const metadata = await dispatch("/.well-known/oauth-protected-resource/mcp", undefined, origin);
+
+    expect(await metadata.json()).toMatchObject({
+      resource: `${origin}/mcp`,
+      authorization_servers: [origin],
+    });
+
+    const challenge = await dispatch("/mcp", { method: "POST" }, origin);
+
+    expect(challenge.status).toBe(401);
+    expect(challenge.headers.get("WWW-Authenticate")).toContain(
+      `${origin}/.well-known/oauth-protected-resource/mcp`,
+    );
+    expect(env.PUBLIC_URL).toBe(base);
+  });
+
   it("keeps consent headers and cookies local to each shared-app request", async () => {
     await startConsent();
     const response = await dispatch("/");

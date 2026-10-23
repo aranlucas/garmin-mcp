@@ -87,15 +87,11 @@ export async function handleTraining(c: Context<AppBindings>): Promise<Response>
     clientSecret: parsed.data.GARMIN_TRAINING_CLIENT_SECRET,
   };
 
-  const origin = new URL(env.PUBLIC_URL).origin;
+  const url = new URL(request.url);
+  const origin = url.origin;
   const issuer = `${origin}/training`;
   const resource = `${issuer}/mcp`;
   const callback = `${issuer}/callback`;
-  const url = new URL(request.url);
-
-  if (url.origin !== origin) {
-    return new Response("Unknown host", { status: 421 });
-  }
 
   const authorizationServer = new OAuthAuthorizationServer<Env>({
     issuer,

@@ -5,12 +5,10 @@ import { READ_SCOPE, WOMENS_SCOPE } from "./scopes";
 import { isTrainingPath } from "./training/auth";
 
 export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const publicUrl = new URL(env.PUBLIC_URL);
-
-    if (new URL(request.url).origin !== publicUrl.origin) {
-      return new Response("Unknown host", { status: 421 });
-    }
+  async fetch(request: Request, bindings: Env, ctx: ExecutionContext): Promise<Response> {
+    const publicUrl = new URL(request.url);
+    // Each branch or version alias uses its own origin without changing shared bindings.
+    const env = { ...bindings, PUBLIC_URL: publicUrl.origin };
 
     const provider = new OAuthProvider<AppEnv>({
       apiRoute: "/mcp",
