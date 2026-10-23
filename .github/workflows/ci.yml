@@ -27,11 +27,8 @@ jobs:
       - name: Set up pnpm and Node.js
         uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
         with:
-          node-version: "22.18.0"
           cache: true
           require-lockfile: true
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
       - name: Check generated Garmin API client
         run: pnpm --filter garmin-api-codegen build && pnpm --filter garmin-api-codegen test && git diff --exit-code -- src/garmin-api
       - name: Run checks and tests
