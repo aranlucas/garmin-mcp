@@ -1,91 +1,126 @@
-# Business Training API (experimental)
+# Garmin Training API v2
 
-The Training API publishes structured workouts and workout schedules to Garmin Connect. Garmin Connect then syncs them to compatible watches and cycling computers. The Activity API linked in the original brief reads recorded activities; it does not publish training workouts. Garmin's current program overview includes Training API access under Business Starter and Enterprise.
+The optional Training connector publishes structured workouts and calendar entries to Garmin Connect for synchronization to compatible devices. It has a separate MCP resource (`/training/mcp`) and OAuth issuer (`/training`); Personal API keys continue to authorize the read-only `/mcp` connector.
 
-This implementation is default-off and isolated in `src/training/`. It is intended for an approved Garmin business application. It does not simulate approval, bypass Garmin permissions, or use undocumented Connect website endpoints.
+The implementation was reconciled on 2026-10-23 against the approved portal's **Training API V2 2.0** (2026-10-15) and **OAuth2PKCE 2.0** references. The portal is accessible after developer-program approval. Reference documents remain outside this repository. Contract and local HTTP end-to-end tests use synthetic Garmin responses. A separate real-account lifecycle test passed against the deployed Worker on 2026-10-23, including cleanup and local grant revocation.
 
-## Enable for an approved application
+## Application setup
 
-1. Confirm the workout and schedule contracts below against the application's current Training API reference in the Garmin developer portal. The detailed reference requires portal access; no approved-app credentials or live write were available for this implementation.
-2. Register `${PUBLIC_URL}/training/callback` as the Garmin redirect URI. Use the canonical HTTPS origin of this deployment. Local development uses the repo's `http://localhost:5173`; Garmin must accept that redirect or you need a registered HTTPS development origin.
-3. Set the build environment `GARMIN_TRAINING_ENABLED=true` and `GARMIN_TRAINING_CLIENT_ID` to the approved application's client ID. `cloudflare.config.ts` emits these as Worker text bindings, defaulting to `false` and an empty ID. These settings must also be present in CI when redeploying. Only the literal string `true` enables the feature. For local development, the same bindings can be supplied in an ignored `.dev.vars` file.
-4. Install `GARMIN_TRAINING_CLIENT_SECRET` as a Worker secret in the Cloudflare dashboard under the Worker's Variables and Secrets settings. For local use, put it in the ignored `.dev.vars` file. Never put it in tracked config, MCP configuration, or chat. This optional secret is validated at runtime rather than declared globally required, so disabled Personal deployments do not require it.
-5. Build and deploy through the existing workflow. Add `${PUBLIC_URL}/training/mcp` to an MCP client with OAuth and approve the workout-write consent, then sign in at Garmin and permit **Workout Import**. This is a separate connector from the Personal endpoint. `/training` provides setup and storage details.
+Register an app in [Garmin's developer portal](https://developerportal.garmin.com/developer-programs/connect-developer-api) with Training API access. For the hosted deployment use:
 
-If disabled, all training routes and their discovery documents return 404. If enabled without the app credentials, they return a redacted 503. Turning the flag off blocks existing training sessions too; the Personal endpoint stays available. This switch does not revoke upstream Garmin consent or erase encrypted grants.
+- Name: Garmin Training MCP
+- OAuth redirect: `https://garmin-mcp.aranlucas.workers.dev/training/callback`
+- Website: `https://garmin-mcp.aranlucas.workers.dev`
+- Privacy: `https://garmin-mcp.aranlucas.workers.dev/privacy`
+- Branding: `https://garmin-mcp.aranlucas.workers.dev/icon.png` (Garmin’s image validator does not accept SVG dimensions; `/icon.svg` serves the same artwork)
 
-## Endpoint and credential boundaries
+The hosted Garmin Training MCP app was registered on 2026-10-23 with an approved key and Starter access enabled. This deployment defaults to Training enabled with its public client ID in `cloudflare.config.ts`; its secret is installed in Cloudflare. For another app, set `GARMIN_TRAINING_CLIENT_ID` in the build environment and install `GARMIN_TRAINING_CLIENT_SECRET` as a Worker secret. Set `GARMIN_TRAINING_ENABLED=false` to disable Training. Enabled builds declare that secret with `bindings.secret()`; disabled builds do not require it. Missing credentials fail closed with a redacted 503. Persist any overrides in CI so later builds use the same application. No secret belongs in tracked configuration or chat.
 
-- Personal resource and issuer: `/mcp` and the deployment origin; key-based Garmin access remains read only.
-- Training resource and issuer: `/training/mcp` and `${PUBLIC_URL}/training`.
-- Training authorization: `/training/authorize`; token and revocation: `/training/oauth/token`; client registration: `/training/oauth/register`.
-- Training discovery: `/.well-known/oauth-authorization-server/training` and `/.well-known/oauth-protected-resource/training/mcp`.
-- MCP write permission: `garmin:workouts:write`. Garmin's `WORKOUT_IMPORT` is checked independently at sign-in and before each tool call. It is a Garmin permission, not an OAuth scope to request from Garmin.
+For local browser development, supply the secret in an ignored `.dev.vars` file and export the flag and client ID when starting Vite:
 
-The existing `@cloudflare/workers-oauth-provider` library owns MCP authorization, client registration, consent, browser-bound upstream state, PKCE transaction storage, token encryption, refresh and revocation. Training grants have a distinct tag and resource audience, and the cookie prefix differs from Personal consent. Tokens issued for `/mcp` cannot authorize `/training/mcp`.
+```sh
+GARMIN_TRAINING_ENABLED=true GARMIN_TRAINING_CLIENT_ID=<client-id> pnpm dev
+```
 
-Garmin access and refresh tokens are encrypted in the library's OAuth grants in the existing `OAUTH_KV` namespace; their values never appear in MCP results. Response data is request-local. Refresh exchanges persist Garmin's replacement token pair in the encrypted grant. MCP access-token lifetime is bounded by the upstream access-token lifetime with a 600-second safety margin. The client does not retry writes, refresh on an ambiguous write response, or follow credential-bearing redirects.
+The redirect must be registered with Garmin. The server uses the request's origin for discovery, redirects and audiences, so register an HTTPS development/preview origin if Garmin does not accept localhost. `.dev.vars` supplies declared secrets; text bindings are selected when evaluating `cloudflare.config.ts`.
 
-Revoke Garmin consent in **Garmin Connect → Connected Apps**, and revoke the MCP grant using the training issuer's advertised revocation endpoint. MCP revocation removes local access; it does not call Garmin's registration-deletion API. No partner-side upstream disconnect control or Garmin permission webhook is implemented. Permissions are fetched before tools execute so removed workout permission stops further operations. Already published workouts and calendar entries remain in Garmin Connect.
+When disabled, the Training protocol routes return 404, including existing sessions. Privacy disclosures remain public for Garmin app registration. `/training` requires enabled, configured credentials. Turning off the feature does not revoke upstream consent or erase grants.
 
-## Tools and examples
+## Sign-in, credentials and consent
 
-`create_workout` publishes a workout without scheduling it. Keep its returned `workoutId`, then pass that ID and an approved calendar date to `schedule_workout`. They are separate calls so that a schedule failure does not hide a successfully created workout or cause automatic duplicate creation. Inspect the account before retrying any failed write; timeouts and invalid success responses can leave an unknown outcome.
+Garmin sign-in uses S256 PKCE at `https://connect.garmin.com/oauth2Confirm`. Code and refresh exchanges run only on the Worker at `https://diauth.garmin.com/di-oauth2-service/oauth/token`, using HTTP Basic client authentication as shown in the current reference. The client secret never enters browser authorization URLs or MCP results. Credential-bearing redirects are rejected.
 
-For example, create a 30-minute easy run:
+The current identity and permission routes are `/partner-gateway/rest/user/id` and `/partner-gateway/rest/user/permissions`. Permissions have the envelope `{ "permissions": ["WORKOUT_IMPORT"] }`. Workout Import must be granted during sign-in and is checked again before every tool execution. Garmin scopes are fixed by the application and are not supplied as selectable authorization scopes.
+
+The existing `@cloudflare/workers-oauth-provider` owns MCP client registration, browser-bound consent/upstream state, MCP PKCE, encrypted grants, refresh and revocation. Training requests require `garmin:workouts:write`; sessions requesting `offline_access` receive refresh tokens. Personal and Training resource audiences cannot authorize one another. Consent discloses create/read/update/delete access and processing by the chosen MCP client, including its AI provider when applicable.
+
+Garmin access/refresh tokens are encrypted in KV grants. An MCP access token lasts at most one hour and expires at least 600 seconds before its Garmin access token. Near-expiry Garmin credentials are refreshed during MCP refresh; replacement credentials are persisted in the encrypted grant. Transient failures preserve the grant; terminal refresh failures invalidate it. Local refresh access lasts at most 30 days and never exceeds Garmin refresh expiry. Workout payloads are request-local and excluded from application logs.
+
+Revoke the MCP refresh token at the issuer's advertised revocation endpoint to remove the local grant. Remove the app in **Garmin Connect → Connected Apps** to revoke Garmin consent. Local revocation does not call Garmin's registration deletion endpoint. This connector provides no partner-side account-deletion control or permission/deregistration webhook. Permissions are checked synchronously before operations. Previously published workouts and client conversation history remain until deleted through their respective controls.
+
+## Tools and verified reference paths
+
+| Tool                      | Method and path                                    |
+| ------------------------- | -------------------------------------------------- |
+| `create_workout`          | `POST /workoutportal/workout/v2`                   |
+| `get_workout`             | `GET /training-api/workout/v2/{workoutId}`         |
+| `update_workout`          | `PUT /training-api/workout/v2/{workoutId}`         |
+| `delete_workout`          | `DELETE /training-api/workout/v2/{workoutId}`      |
+| `schedule_workout`        | `POST /training-api/schedule/`                     |
+| `get_workout_schedule`    | `GET /training-api/schedule/{scheduleId}`          |
+| `update_workout_schedule` | `PUT /training-api/schedule/{scheduleId}`          |
+| `delete_workout_schedule` | `DELETE /training-api/schedule/{scheduleId}`       |
+| `list_workout_schedules`  | `GET /training-api/schedule?startDate=…&endDate=…` |
+
+All paths are pinned to `https://apis.garmin.com`. The create-workout route intentionally follows the reference’s `workoutportal` path and passed the live test. There is no fallback that could duplicate a write.
+
+V2 workout payloads contain `segments`, each with `segmentOrder`, `sport` and `steps`. The old top-level `steps` payload is rejected. Create a workout, retain its returned `workoutId`, then schedule it separately:
 
 ```json
 {
   "workout": {
-    "workoutName": "Easy run — 30 minutes",
+    "workoutName": "Easy run - 30 minutes",
     "sport": "RUNNING",
-    "steps": [
+    "segments": [
       {
-        "type": "WorkoutStep",
-        "stepOrder": 1,
-        "intensity": "ACTIVE",
-        "durationType": "TIME",
-        "durationValue": 1800,
-        "targetType": "OPEN"
+        "segmentOrder": 1,
+        "sport": "RUNNING",
+        "steps": [
+          {
+            "type": "WorkoutStep",
+            "stepOrder": 1,
+            "intensity": "ACTIVE",
+            "durationType": "TIME",
+            "durationValue": 1800,
+            "targetType": "OPEN"
+          }
+        ]
       }
     ]
   }
 }
 ```
 
-Then schedule the returned ID, for example `{"workoutId":123,"date":"2026-10-26"}`. Finally sync Garmin Connect with the compatible device. The result only confirms the Garmin Connect operation.
+Then call `schedule_workout` with `{ "workoutId": 123, "date": "2026-10-26" }`. Updates supply complete workout details and the `ownerId` returned by Garmin; server-assigned IDs are excluded from create input. Update/delete tools carry destructive annotations and require the assistant to confirm the requested changes.
 
-The provisional input model supports running, cycling, pool swimming, strength, cardio, generic, yoga, and Pilates. Device support for a sport, target, or exercise varies. Simple steps support `TIME`, `DISTANCE`, `REPS`, and `OPEN`; one repeat-block level supports a fixed repetition count. Step order is globally increasing, including nested steps. Nested repeat blocks are deliberately excluded. Pool swimming requires pool length and its display unit. Exercise names/categories use Garmin identifiers and still require verification against the approved reference.
+Garmin returns a numeric ID from schedule creation; the adapter validates it and returns `{ "scheduleId": 123 }`. Reads return full schedule objects. Garmin also documents 204 as a successful mutation response; empty 200/204 responses return `{ "accepted": true }` without an invented ID. If creation yields no ID, inspect Garmin Connect before any subsequent action; never repeat creation just to obtain an ID. Timeouts, transport failures and malformed success responses can leave a write's outcome unknown. The server does not automatically retry writes. Successful scheduling confirms a Garmin Connect operation; device synchronization requires Garmin Connect and cannot be established by this API response.
 
-Time values are seconds, distance is meters, and weight is kilograms regardless of display unit. `PACE` and `SPEED` targets use meters per second, so a pace of 5:00/km is approximately 3.333 m/s. Heart rate and power accept a configured Garmin zone or a low/high range. `targetValueType: "PERCENT"` denotes percentage units for heart rate/power. These are adapter assumptions pending the portal review below, not an exhaustive Training API specification.
+## Supported input subset and limits
 
-`get_workout` reads by workout ID; `get_workout_schedule` reads by schedule ID. `list_workout_schedules` accepts an ordered, inclusive range of at most 31 calendar dates. Body-size, step-count, range, and string-length limits are local implementation bounds. Inputs reject unknown fields, server-assigned IDs in create payloads, invalid dates, unordered target ranges, duplicate step orders, and unsupported nesting.
+The adapter supports the eight documented segment sports plus `MULTI_SPORT`, up to 25 segments, 100 total steps for single sport and 250 for multisport, counting repeat children. Segment and step order are globally increasing. Provider/source fields default to `Garmin MCP` and are capped at Garmin's 20-character limit. Workout descriptions are capped at 1024 characters and step descriptions at 512.
 
-## Contract status and verification
+Steps support `TIME`, `DISTANCE`, `REPS` and `OPEN`; one fixed-count repeat-block level is supported. Nested repeats, secondary targets and advanced duration types are outside this input subset and fail validation. Running/cycling pace and speed use meters per second; time uses seconds, distance uses meters, and strength weights use kilograms regardless of display units. Heart-rate/power targets accept a saved zone or an ordered range; percentage values use `targetValueType: "PERCENT"`. Swim steps use `SWIM_STROKE`; unspecified pool sizes are allowed. Multisport swim pool settings must match workout-level settings. Exercise identifiers must match Garmin's supplied appendix; the adapter bounds their strings but does not ship that confidential exercise catalog.
 
-The verified public sources establish Garmin sign-in, permission checking, and Garmin Connect's role in device sync. **Workout routes, payloads, response envelopes, enum values, and units below remain provisional until checked against the approved portal reference.** Tests use mocked contract fixtures; passing tests do not establish live Garmin compatibility.
+Dates are Garmin calendar dates (`YYYY-MM-DD`), without UTC conversion. Schedule queries have a local limit of 31 inclusive calendar dates. JSON responses are limited to 1 MiB, token responses to 64 KiB, and outbound requests to 20 seconds with cancellation propagation. These local safeguards do not replace Garmin's app/user quotas.
 
-The adapter currently pins `https://apis.garmin.com` with these paths:
+## Verification
 
-| Tool                     | Method and path                                    | Expected JSON response                               |
-| ------------------------ | -------------------------------------------------- | ---------------------------------------------------- |
-| `create_workout`         | `POST /training-api/workout`                       | Workout with numeric `workoutId`, name, sport, steps |
-| `get_workout`            | `GET /training-api/workout/{workoutId}`            | Workout                                              |
-| `schedule_workout`       | `POST /training-api/schedule`                      | Numeric `scheduleId`, `workoutId`, `date`            |
-| `get_workout_schedule`   | `GET /training-api/schedule/{scheduleId}`          | Schedule                                             |
-| `list_workout_schedules` | `GET /training-api/schedule?startDate=…&endDate=…` | Array of schedules                                   |
+`pnpm run check` runs type generation, TypeScript, lint, formatting and the Workers-runtime tests. `pnpm run build` verifies the production bundle. Tests include a complete registration → consent → upstream PKCE → encrypted grant → authenticated Streamable HTTP → all nine operations → local revocation flow, as well as upstream refresh rotation, scope/resource isolation, per-call permission withdrawal, malformed responses, cancellation, 204 success and ambiguous write failure. Garmin calls in these tests are mocked.
 
-Confirm whether provider/source identifiers are required, whether responses return full objects or IDs, and whether step-order and target-unit rules match this subset. Pin a supplied authoritative schema before removing the experimental label. No arbitrary base URL or generic HTTP tool is exposed.
+`pnpm run smoke` tests the deployed Personal discovery/consent flow and the public branding/privacy URLs. It does not authorize a Garmin account or publish workouts. Chrome verification exercises the real local UI and catches configuration or browser-cookie/CSP issues that HTTP mocks cannot prove.
 
-OAuth authorization is pinned to `https://connect.garmin.com/oauth2Confirm`. The token endpoint uses `https://diauth.garmin.com/di-oauth2-service/oauth/token` from the later `OAuth2PKCE_1.pdf`. The earlier PDF uses `connectapi.garmin.com`; verify the approved app's current reference before use. The adapter does not try both hosts with a client secret. Both documents contain inconsistent expiry prose, so actual token-response lifetimes are used. The permission response is expected to be a JSON array of strings; Garmin's public example has a malformed envelope, which also needs live confirmation.
+The opt-in `training-live` Vitest project exercises real Garmin writes after a browser-authorized session has been saved outside the repository. Run:
 
-Use `pnpm run check` and `pnpm run build` for local verification. The tests exercise mocked sign-in, scopes and resource isolation, encrypted token handling, refresh rotation, permission checks, tool calls, input validation, cancellation, bounded responses and redacted failures. Live validation still requires signing in with approved credentials, publishing and scheduling a small workout, and confirming it appears after device sync. Check revoked consent and an upstream refresh as part of that validation. The existing `smoke` project continues to test the Personal deployment only.
+```sh
+GARMIN_E2E_SESSION_FILE=/absolute/private/session.json pnpm exec vitest run --project training-live
+```
 
-Sources checked on 2026-10-23:
+The private JSON contains `base`, `clientId` and `refreshToken` for the disposable MCP authorization. The test refreshes the session, creates a clearly named synthetic 60-second run, reads and updates it, schedules and moves it, and removes its calendar entry and workout in cleanup. It verifies that the test workout has no remaining calendar entries across both test dates, then revokes the test MCP grant and confirms its access token returns 401. A private records journal retains only synthetic fixture identifiers and cleanup status for investigation if a run fails. Never commit the session file or pass its contents in chat. Production unit tests and smoke tests do not run this project.
 
-- [Garmin business program overview](https://developer.garmin.com/gc-developer-program/overview/).
-- [Training API: workouts, calendar and device synchronization](https://developer.garmin.com/gc-developer-program/enterprise/training-api/).
-- [Activity API: recorded activity data](https://developer.garmin.com/gc-developer-program/enterprise/activity-api/).
-- [Later OAuth2 PKCE specification](https://developerportal.garmin.com/sites/default/files/OAuth2PKCE_1.pdf).
-- [Original OAuth2 PKCE specification](https://developerportal.garmin.com/sites/default/files/OAuth2PKCE.pdf).
-- [Portal documentation, authentication required](https://developerportal.garmin.com/developer-programs/programs-docs).
+Verification completed on 2026-10-23:
+
+- Real Chrome developer-portal app registration, published PNG/SVG branding and privacy URLs, and Garmin Workout Import consent.
+- Real Garmin authorization-code exchange, current permission envelope, user-ID lookup and encrypted MCP grant issuance.
+- Real MCP refresh, all nine Training operations, workout and calendar readback, movement to a second date, cleanup and test-grant revocation.
+- Workers-runtime regression tests reproduce and fix the unsupported `redirect: "error"` mode in both Garmin clients. The implementation uses `manual` and rejects 3xx responses. The real browser flow also caught the required `sso.garmin.com` form-action allowance.
+- The live schedule response was confirmed to be a numeric ID and is covered by a contract regression test.
+
+The passing live run removed its synthetic workout and calendar entry. Its temporary MCP grant was revoked; the app remains available for new connections. The Personal connector’s live health reads still require a real Personal API key and were not performed in this session. Physical watch synchronization and near-expiry upstream Garmin refresh/revocation remain unverified live; upstream refresh rotation and removed-permission handling are covered by mocked runtime tests. Do not label Garmin Connect API success as watch-delivery verification.
+
+Sources:
+
+- [Approved portal documentation](https://developerportal.garmin.com/developer-programs/programs-docs)
+- [Training API V2 2.0 archive](https://developerportal.garmin.com/sites/default/files/Training%20API%20V2%202.0.zip)
+- [OAuth2PKCE 2.0](https://developerportal.garmin.com/sites/default/files/OAuth2PKCE%202.0.pdf)
+- [Program Start Guide 2.0](https://developerportal.garmin.com/sites/default/files/Garmin%20Developer%20Program_Start_Guide_2.0.pdf)
+- [Cloudflare configuration and conditional secret bindings](https://developers.cloudflare.com/cf/projects/cloudflare-config/)

@@ -1,10 +1,16 @@
 import { env } from "cloudflare:workers";
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+  type CallToolRequestParams,
+} from "@modelcontextprotocol/client";
 import { OAuthAuthorizationServer } from "@cloudflare/workers-oauth-provider";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import * as z from "zod";
 import { isTrainingPath } from "../src/training/auth";
 import { TRAINING_BASE, TRAINING_TOKEN_URL, type TokenSet } from "../src/training/client";
+import { workoutResponse, workoutInput } from "../src/training/schemas";
 import type { GarminJson } from "../src/garmin";
 import worker from "../src/index";
 import { requestUrl, required } from "./support";
@@ -16,6 +22,16 @@ const issuer = `${base}/training`;
 const resource = `${issuer}/mcp`;
 
 const scope = "garmin:workouts:write";
+
+type TrainingScenario = {
+  call: CallToolRequestParams;
+  method: string;
+  path: string;
+  body?: object;
+  result: unknown;
+};
+
+type AuthorizationMetadata = { revocation_endpoint: string };
 
 const redirectUri = "http://localhost:9876/callback";
 
@@ -192,7 +208,7 @@ function mockCallback(permissions = ["WORKOUT_IMPORT"], expiresIn = 7200) {
   outbound.mockResolvedValueOnce(
     Response.json(upstreamTokens("upstream-access", "upstream-refresh", expiresIn)),
   );
-  outbound.mockResolvedValueOnce(Response.json(permissions));
+  outbound.mockResolvedValueOnce(Response.json({ permissions }));
 
   if (permissions.includes("WORKOUT_IMPORT")) {
     outbound.mockResolvedValueOnce(Response.json({ userId: "user:with:separator" }));
@@ -374,7 +390,12 @@ describe("Training routing and configuration", () => {
   it("returns a sanitized 503 when enabled credentials are missing", async () => {
     await Promise.all(
       [
-        { ...env, GARMIN_TRAINING_ENABLED: "true" },
+        {
+          ...env,
+          GARMIN_TRAINING_ENABLED: "true",
+          GARMIN_TRAINING_CLIENT_ID: "",
+          GARMIN_TRAINING_CLIENT_SECRET: "",
+        },
         { ...trainingEnv, GARMIN_TRAINING_CLIENT_ID: "" },
         { ...trainingEnv, GARMIN_TRAINING_CLIENT_SECRET: " " },
       ].map(async (bindings) => {
@@ -389,6 +410,31 @@ describe("Training routing and configuration", () => {
       }),
     );
 
+    expect(outbound).not.toHaveBeenCalled();
+  });
+
+  it("publishes Training privacy and branding before app credentials exist", async () => {
+    const disabled = { ...env, GARMIN_TRAINING_ENABLED: "false" };
+    const response = await dispatch("/training/privacy", undefined, disabled);
+    expect(response.status).toBe(200);
+    const body = await response.text();
+    expect(body).toContain("AI transparency");
+    expect(body).toContain("Cloudflare");
+    expect(body).toContain("withdraw permission");
+    const policy = await dispatch("/privacy", undefined, disabled);
+    expect(await policy.text()).toContain("Training and AI processing");
+    const icon = await dispatch("/icon.svg", undefined, disabled);
+    expect(icon.status).toBe(200);
+    expect(icon.headers.get("Content-Type")).toBe("image/svg+xml");
+    expect(await icon.text()).toContain('viewBox="0 0 300 300"');
+    const png = await dispatch("/icon.png", undefined, disabled);
+    expect(png.status).toBe(200);
+    expect(png.headers.get("Content-Type")).toBe("image/png");
+    const bytes = new Uint8Array(await png.arrayBuffer());
+    expect(Array.from(bytes.slice(0, 8))).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+    const dimensions = new DataView(bytes.buffer);
+    expect(dimensions.getUint32(16)).toBe(300);
+    expect(dimensions.getUint32(20)).toBe(300);
     expect(outbound).not.toHaveBeenCalled();
   });
 
@@ -422,6 +468,7 @@ describe("Training routing and configuration", () => {
     const home = await (await dispatch("/training")).text();
     expect(home).toContain(resource);
     expect(home).toContain("create workouts");
+    expect(home).toContain("edit or delete");
     expect(home).toContain("Workout Import");
     expect(home).not.toContain("Read only");
     const privacy = await (await dispatch("/training/privacy")).text();
@@ -480,6 +527,9 @@ describe("Training browser authorization", () => {
     );
     expect(consent.response.headers.get("Content-Security-Policy")).toContain(
       "https://connect.garmin.com",
+    );
+    expect(consent.response.headers.get("Content-Security-Policy")).toContain(
+      "https://sso.garmin.com",
     );
     expect(consent.response.headers.get("Referrer-Policy")).toBe("same-origin");
     expect(outbound).not.toHaveBeenCalled();
@@ -577,12 +627,15 @@ describe("Training browser authorization", () => {
       connection.upstream.searchParams.get("code_challenge"),
     );
     expect(submitted.get("redirect_uri")).toBe(`${issuer}/callback`);
-    expect(submitted.get("client_secret")).toBe(trainingEnv.GARMIN_TRAINING_CLIENT_SECRET);
+    expect(submitted.has("client_secret")).toBe(false);
+    expect(new Headers(outbound.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe(
+      `Basic ${Buffer.from(`${trainingEnv.GARMIN_TRAINING_CLIENT_ID}:${trainingEnv.GARMIN_TRAINING_CLIENT_SECRET}`).toString("base64")}`,
+    );
     expect(requestUrl(required(outbound.mock.calls[1], "permissions call")[0])).toBe(
-      `${TRAINING_BASE}/wellness-api/rest/user/permissions`,
+      `${TRAINING_BASE}/partner-gateway/rest/user/permissions`,
     );
     expect(requestUrl(required(outbound.mock.calls[2], "identity call")[0])).toBe(
-      `${TRAINING_BASE}/wellness-api/rest/user/id`,
+      `${TRAINING_BASE}/partner-gateway/rest/user/id`,
     );
     const response = await exchange(connection.clientId, connection.code);
     expect(response.status).toBe(200);
@@ -592,6 +645,31 @@ describe("Training browser authorization", () => {
     expect(text).not.toContain(trainingEnv.GARMIN_TRAINING_CLIENT_SECRET);
     expect(JSON.parse(text)).toMatchObject({ expires_in: 3600, scope: `${scope} offline_access` });
     expect(outbound).toHaveBeenCalledTimes(3);
+  });
+
+  it("logs only callback stage and HTTP status when Garmin rejects a token exchange", async () => {
+    const started = await startUpstream();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    outbound.mockResolvedValueOnce(
+      Response.json({ error: "private-upstream-body" }, { status: 401 }),
+    );
+
+    const response = await dispatch(
+      `/training/callback?code=private-authorization-code&state=${upstreamState(started.upstream)}`,
+      { headers: { Cookie: started.upstreamCookie } },
+    );
+
+    expect(response.status).toBe(502);
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      JSON.stringify({
+        event: "training_connection_failed",
+        stage: "token_exchange",
+        status: 401,
+        reason:
+          "Garmin Training access expired or was revoked. Refresh the MCP session or reconnect.",
+      }),
+    );
+    expect(await response.text()).not.toContain("private-");
   });
 
   it("rejects missing callback binding and replayed upstream state", async () => {
@@ -825,5 +903,256 @@ describe("Training token lifecycle and isolation", () => {
     await waitOnExecutionContext(ctx);
     expect(response.status).toBe(401);
     expect(outbound).not.toHaveBeenCalled();
+  });
+});
+
+async function authenticatedClient() {
+  const connection = await connect();
+  const response = await exchange(connection.clientId, connection.code);
+  expect(response.status).toBe(200);
+  const tokens = await response.json<TokenPair>();
+  const client = new Client({ name: "training-http-e2e", version: "1.0.0" });
+
+  const transport = new StreamableHTTPClientTransport(new URL(resource), {
+    requestInit: { headers: { Authorization: `Bearer ${tokens.access_token}` } },
+    fetch: (input, init) => {
+      const request = new Request(input, init);
+
+      return dispatch(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+      });
+    },
+  });
+
+  onTestFinished(() => client.close());
+  await client.connect(transport);
+
+  return { client, tokens, connection };
+}
+
+describe("Training end-to-end over authenticated Streamable HTTP", () => {
+  const workout = workoutInput.parse({
+    workoutName: "E2E easy run",
+    sport: "RUNNING",
+    segments: [
+      {
+        segmentOrder: 1,
+        sport: "RUNNING",
+        steps: [
+          {
+            type: "WorkoutStep",
+            stepOrder: 1,
+            intensity: "ACTIVE",
+            durationType: "TIME",
+            durationValue: 60,
+            targetType: "OPEN",
+          },
+        ],
+      },
+    ],
+  });
+
+  const published = { ...workout, workoutId: 871, ownerId: 52 };
+  const schedule = { scheduleId: 472, workoutId: 871, date: "2026-10-25" };
+
+  it("registers, consents, exchanges PKCE, then creates, reads, updates, schedules and deletes through the Worker", async () => {
+    const { client, tokens, connection } = await authenticatedClient();
+    const list = await client.listTools();
+    expect(list.tools).toHaveLength(9);
+    // Protocol initialization and discovery never spend a Garmin data request.
+    expect(outbound).toHaveBeenCalledTimes(3);
+    outbound.mockClear();
+
+    const updated = { ...workout, workoutName: "E2E revised run" };
+    const moved = { ...schedule, date: "2026-10-26" };
+
+    const cases = [
+      {
+        call: { name: "create_workout", arguments: { workout } },
+        method: "POST",
+        path: "/workoutportal/workout/v2",
+        body: workout,
+        result: published,
+      },
+      {
+        call: { name: "get_workout", arguments: { workoutId: 871 } },
+        method: "GET",
+        path: "/training-api/workout/v2/871",
+        result: published,
+      },
+      {
+        call: {
+          name: "update_workout",
+          arguments: { workoutId: 871, ownerId: 52, workout: updated },
+        },
+        method: "PUT",
+        path: "/training-api/workout/v2/871",
+        body: { ...updated, workoutId: 871, ownerId: 52 },
+        result: { ...published, ...updated },
+      },
+      {
+        call: { name: "schedule_workout", arguments: { workoutId: 871, date: schedule.date } },
+        method: "POST",
+        path: "/training-api/schedule/",
+        body: { workoutId: 871, date: schedule.date },
+        result: schedule,
+      },
+      {
+        call: { name: "get_workout_schedule", arguments: { scheduleId: 472 } },
+        method: "GET",
+        path: "/training-api/schedule/472",
+        result: schedule,
+      },
+      {
+        call: {
+          name: "list_workout_schedules",
+          arguments: { startDate: schedule.date, endDate: schedule.date },
+        },
+        method: "GET",
+        path: "/training-api/schedule?startDate=2026-10-25&endDate=2026-10-25",
+        result: [schedule],
+      },
+      {
+        call: { name: "update_workout_schedule", arguments: moved },
+        method: "PUT",
+        path: "/training-api/schedule/472",
+        body: { workoutId: moved.workoutId, date: moved.date, scheduleId: moved.scheduleId },
+        result: moved,
+      },
+      {
+        call: { name: "delete_workout_schedule", arguments: { scheduleId: 472 } },
+        method: "DELETE",
+        path: "/training-api/schedule/472",
+        result: { accepted: true },
+      },
+      {
+        call: { name: "delete_workout", arguments: { workoutId: 871 } },
+        method: "DELETE",
+        path: "/training-api/workout/v2/871",
+        result: { accepted: true },
+      },
+    ] satisfies TrainingScenario[];
+
+    for (const scenario of cases) {
+      outbound.mockResolvedValueOnce(Response.json({ permissions: ["WORKOUT_IMPORT"] }));
+      outbound.mockResolvedValueOnce(
+        scenario.method === "DELETE"
+          ? new Response(null, { status: 204 })
+          : Response.json(scenario.result),
+      );
+      // Each operation depends on the previous create/read/update in this lifecycle.
+      // eslint-disable-next-line no-await-in-loop
+      const result = await client.callTool(scenario.call);
+      expect(result.isError, scenario.call.name).not.toBe(true);
+      expect(result.structuredContent, scenario.call.name).toMatchObject({
+        source: "Garmin Connect",
+        data: scenario.result,
+      });
+      expect(result.content).toEqual([
+        { type: "text", text: JSON.stringify(result.structuredContent) },
+      ]);
+      const calls = outbound.mock.calls.slice(-2);
+      expect(requestUrl(required(calls[0], "permission check")[0])).toBe(
+        `${TRAINING_BASE}/partner-gateway/rest/user/permissions`,
+      );
+      const [input, init] = required(calls[1], "Garmin operation");
+      expect(requestUrl(input), scenario.call.name).toBe(TRAINING_BASE + scenario.path);
+      expect(init?.method).toBe(scenario.method);
+      expect(init?.body).toBe("body" in scenario ? JSON.stringify(scenario.body) : undefined);
+      expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer upstream-access");
+      expect(init?.redirect).toBe("manual");
+      const serialized = JSON.stringify(result);
+
+      for (const secret of [
+        "upstream-access",
+        "upstream-refresh",
+        trainingEnv.GARMIN_TRAINING_CLIENT_SECRET,
+        tokens.access_token,
+      ]) {
+        expect(serialized).not.toContain(secret);
+      }
+    }
+
+    expect(outbound).toHaveBeenCalledTimes(18);
+    // Encrypted grants never persist plaintext Garmin credentials.
+    const keys = await env.OAUTH_KV.list();
+
+    const stored = await Promise.all(keys.keys.map((key) => env.OAUTH_KV.get(key.name)));
+
+    for (const value of stored) {
+      expect(value).not.toContain("upstream-access");
+      expect(value).not.toContain("upstream-refresh");
+    }
+
+    // Revoking the MCP grant disables both access and refresh, before any Garmin call.
+    const metadata = await (
+      await dispatch("/.well-known/oauth-authorization-server/training")
+    ).json<AuthorizationMetadata>();
+
+    const revoked = await dispatch(metadata.revocation_endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: connection.clientId,
+        token: tokens.refresh_token,
+        token_type_hint: "refresh_token",
+      }),
+    });
+
+    expect(revoked.status).toBe(200);
+    expect(
+      (
+        await dispatch("/training/mcp", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${tokens.access_token}` },
+        })
+      ).status,
+    ).toBe(401);
+    expect((await refresh(connection.clientId, tokens.refresh_token)).status).toBe(400);
+    expect(outbound).toHaveBeenCalledTimes(18);
+  });
+
+  it("handles an empty write success, ambiguous write failure and withdrawn permission without replaying writes", async () => {
+    const { client } = await authenticatedClient();
+    outbound.mockClear();
+    outbound.mockResolvedValueOnce(Response.json({ permissions: ["WORKOUT_IMPORT"] }));
+    outbound.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const accepted = await client.callTool({ name: "create_workout", arguments: { workout } });
+    expect(accepted.isError).not.toBe(true);
+    expect(accepted.structuredContent).toMatchObject({ data: { accepted: true } });
+    expect(
+      workoutResponse.safeParse(
+        z.object({ data: z.unknown() }).parse(accepted.structuredContent).data,
+      ).success,
+    ).toBe(false);
+
+    outbound.mockResolvedValueOnce(Response.json({ permissions: ["WORKOUT_IMPORT"] }));
+    outbound.mockRejectedValueOnce(new Error("private upstream detail"));
+
+    const failed = await client.callTool({
+      name: "schedule_workout",
+      arguments: { workoutId: 871, date: schedule.date },
+    });
+
+    expect(failed.isError).toBe(true);
+    expect(JSON.stringify(failed)).toContain("may have succeeded");
+    expect(JSON.stringify(failed)).not.toContain("private upstream detail");
+    expect(outbound).toHaveBeenCalledTimes(4);
+
+    outbound.mockResolvedValueOnce(Response.json({ permissions: [] }));
+    const denied = await client.callTool({ name: "delete_workout", arguments: { workoutId: 871 } });
+    expect(denied.isError).toBe(true);
+    expect(JSON.stringify(denied)).toContain("permission is missing");
+    expect(outbound).toHaveBeenCalledTimes(5);
+
+    const invalid = await client.callTool({
+      name: "update_workout_schedule",
+      arguments: { ...schedule, date: "2026-02-30" },
+    });
+
+    expect(invalid.isError).toBe(true);
+    expect(outbound).toHaveBeenCalledTimes(5);
   });
 });

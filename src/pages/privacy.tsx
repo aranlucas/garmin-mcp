@@ -1,4 +1,5 @@
 import { SiteLayout } from "./layout";
+import { TrainingPrivacyDetails } from "./training";
 import { garminKeyUrl } from "./links";
 
 export function PrivacyPage() {
@@ -23,6 +24,7 @@ export function PrivacyPage() {
             <a href="#expiry">Access and expiry</a>
             <a href="#disconnect">Disconnect</a>
             <a href="#logs">Logs and infrastructure</a>
+            <a href="#training">Training and AI processing</a>
           </nav>
         </aside>
         <div class="privacy-sections">
@@ -41,7 +43,7 @@ export function PrivacyPage() {
                 provider library. The server decrypts it to call Garmin. Use a deployment you trust.
               </p>
               <p class="callout">
-                <strong>Health data is not persisted.</strong> Garmin access tokens and API
+                <strong>Health data is not persisted.</strong> Personal API access tokens and API
                 responses are held only for the current request.
               </p>
             </div>
@@ -122,6 +124,15 @@ export function PrivacyPage() {
               <p>
                 Cloudflare infrastructure processes requests under the deployment owner’s account.
               </p>
+            </div>
+          </section>
+          <section class="policy-section" id="training" aria-labelledby="training-title">
+            <span class="section-number" aria-hidden="true">
+              05
+            </span>
+            <div>
+              <h2 id="training-title">Training and AI processing</h2>
+              <TrainingPrivacyDetails />
             </div>
           </section>
         </div>

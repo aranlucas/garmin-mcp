@@ -5,12 +5,16 @@ import type { WorkoutInput, ScheduleInput } from "./schemas";
 
 export const TRAINING_BASE = "https://apis.garmin.com";
 
-// Pin the hostname in Garmin's later OAuth2PKCE_1.pdf; never follow credential-bearing redirects.
+// Pin the hostname in Garmin's OAuth2PKCE 2.0 reference; never follow credential-bearing redirects.
 export const TRAINING_TOKEN_URL = "https://diauth.garmin.com/di-oauth2-service/oauth/token";
 
 export { TrainingError };
 
-type TrainingBody = WorkoutInput | ScheduleInput;
+type TrainingBody =
+  | WorkoutInput
+  | ScheduleInput
+  | (WorkoutInput & { workoutId: number; ownerId: number })
+  | (ScheduleInput & { scheduleId: number });
 
 type UserIdentity = { userId: string };
 
@@ -57,7 +61,7 @@ async function checkedFetch(
   try {
     response = await fetcher(url, {
       ...init,
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.any([AbortSignal.timeout(20_000), ...(init.signal ? [init.signal] : [])]),
     });
   } catch {
@@ -91,15 +95,33 @@ async function checkedFetch(
   return response;
 }
 
+const responseKind = z.union([
+  z.string().transform(() => "string"),
+  z.number().transform(() => "number"),
+  z.boolean().transform(() => "boolean"),
+  z.null().transform(() => "null"),
+  z.array(z.unknown()).transform(() => "array"),
+  z.record(z.string(), z.unknown()).transform(() => "object"),
+]);
+
 async function validatedJson<Output>(
   schema: z.ZodType<Output>,
   response: Response,
   limit = 1024 * 1024,
   signal?: AbortSignal,
+  allowEmpty = false,
 ): Promise<Output> {
+  let responseType = "unread";
+
   try {
     const bytes = await readBounded(response, limit);
-    const data: unknown = JSON.parse(new TextDecoder().decode(bytes));
+
+    const data: unknown =
+      bytes.length === 0 && allowEmpty
+        ? { accepted: true }
+        : JSON.parse(new TextDecoder().decode(bytes));
+
+    responseType = responseKind.parse(data);
 
     return schema.parse(data);
   } catch {
@@ -107,7 +129,9 @@ async function validatedJson<Output>(
       throw new TrainingError("The Garmin Training request was cancelled.", 499);
     }
 
-    // Neither upstream data nor Zod issues may expose Garmin credentials or personal data.
+    // Record only structural diagnostics; never response values or validation issues.
+    // oxlint-disable-next-line no-console -- Redacted diagnostics for Garmin contract drift.
+    console.error(JSON.stringify({ event: "training_invalid_response", responseType }));
     throw new TrainingError(
       "Garmin Training returned an unrecognized response. Check Garmin Connect before retrying a write.",
       502,
@@ -125,12 +149,12 @@ async function exchangeToken(
     TRAINING_TOKEN_URL,
     {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-      body: new URLSearchParams({
-        ...params,
-        client_id: config.clientId,
-        client_secret: config.clientSecret,
-      }),
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+        Authorization: `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString("base64")}`,
+      },
+      body: new URLSearchParams(params),
     },
     fetch,
   );
@@ -176,7 +200,7 @@ export class TrainingClient {
   private async request<Output>(
     schema: z.ZodType<Output>,
     path: string,
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "PUT" | "DELETE",
     signal?: AbortSignal,
     body?: TrainingBody,
   ): Promise<Output> {
@@ -194,20 +218,34 @@ export class TrainingClient {
 
     const response = await checkedFetch(TRAINING_BASE + path, init, this.fetcher);
 
-    return validatedJson(schema, response, 1024 * 1024, signal);
+    // Garmin documents 204 for successful mutations. Never invent an object ID.
+    if (response.status === 204 && method !== "GET") {
+      await response.body?.cancel();
+
+      return schema.parse({ accepted: true });
+    }
+
+    return validatedJson(schema, response, 1024 * 1024, signal, method !== "GET");
   }
 
   getUserId(signal?: AbortSignal): Promise<UserIdentity> {
     return this.request(
       z.object({ userId: z.string().min(1) }),
-      "/wellness-api/rest/user/id",
+      "/partner-gateway/rest/user/id",
       "GET",
       signal,
     );
   }
 
   getPermissions(signal?: AbortSignal): Promise<string[]> {
-    return this.request(z.array(z.string()), "/wellness-api/rest/user/permissions", "GET", signal);
+    const result = this.request(
+      z.object({ permissions: z.array(z.string()) }),
+      "/partner-gateway/rest/user/permissions",
+      "GET",
+      signal,
+    );
+
+    return result.then(({ permissions }) => permissions);
   }
 
   async requireWorkoutPermission(signal?: AbortSignal): Promise<void> {
@@ -224,7 +262,7 @@ export class TrainingClient {
     workout: WorkoutInput,
     signal?: AbortSignal,
   ): Promise<Output> {
-    return this.request(schema, "/training-api/workout", "POST", signal, workout);
+    return this.request(schema, "/workoutportal/workout/v2", "POST", signal, workout);
   }
 
   getWorkout<Output>(
@@ -232,7 +270,7 @@ export class TrainingClient {
     workoutId: number,
     signal?: AbortSignal,
   ): Promise<Output> {
-    return this.request(schema, `/training-api/workout/${workoutId}`, "GET", signal);
+    return this.request(schema, `/training-api/workout/v2/${workoutId}`, "GET", signal);
   }
 
   scheduleWorkout<Output>(
@@ -240,7 +278,7 @@ export class TrainingClient {
     schedule: ScheduleInput,
     signal?: AbortSignal,
   ): Promise<Output> {
-    return this.request(schema, "/training-api/schedule", "POST", signal, schedule);
+    return this.request(schema, "/training-api/schedule/", "POST", signal, schedule);
   }
 
   getSchedule<Output>(
@@ -249,6 +287,48 @@ export class TrainingClient {
     signal?: AbortSignal,
   ): Promise<Output> {
     return this.request(schema, `/training-api/schedule/${scheduleId}`, "GET", signal);
+  }
+
+  updateWorkout<Output>(
+    schema: z.ZodType<Output>,
+    workoutId: number,
+    ownerId: number,
+    workout: WorkoutInput,
+    signal?: AbortSignal,
+  ): Promise<Output> {
+    return this.request(schema, `/training-api/workout/v2/${workoutId}`, "PUT", signal, {
+      ...workout,
+      workoutId,
+      ownerId,
+    });
+  }
+
+  deleteWorkout<Output>(
+    schema: z.ZodType<Output>,
+    workoutId: number,
+    signal?: AbortSignal,
+  ): Promise<Output> {
+    return this.request(schema, `/training-api/workout/v2/${workoutId}`, "DELETE", signal);
+  }
+
+  updateSchedule<Output>(
+    schema: z.ZodType<Output>,
+    scheduleId: number,
+    schedule: ScheduleInput,
+    signal?: AbortSignal,
+  ): Promise<Output> {
+    return this.request(schema, `/training-api/schedule/${scheduleId}`, "PUT", signal, {
+      ...schedule,
+      scheduleId,
+    });
+  }
+
+  deleteSchedule<Output>(
+    schema: z.ZodType<Output>,
+    scheduleId: number,
+    signal?: AbortSignal,
+  ): Promise<Output> {
+    return this.request(schema, `/training-api/schedule/${scheduleId}`, "DELETE", signal);
   }
 
   listSchedules<Output>(

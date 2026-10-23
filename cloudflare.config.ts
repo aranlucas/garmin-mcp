@@ -23,9 +23,13 @@ export default defineConfig(({ mode, isPreview }) => ({
       },
     },
     env: {
-      // Business Training API is opt-in; install the optional client secret separately.
-      GARMIN_TRAINING_ENABLED: bindings.text(process.env.GARMIN_TRAINING_ENABLED ?? "false"),
-      GARMIN_TRAINING_CLIENT_ID: bindings.text(process.env.GARMIN_TRAINING_CLIENT_ID ?? ""),
+      // Declare the secret only for enabled Training builds; cf loads declared secrets in dev.
+      GARMIN_TRAINING_CLIENT_SECRET:
+        (process.env.GARMIN_TRAINING_ENABLED ?? "true") === "true" ? bindings.secret() : undefined,
+      GARMIN_TRAINING_ENABLED: bindings.text(process.env.GARMIN_TRAINING_ENABLED ?? "true"),
+      GARMIN_TRAINING_CLIENT_ID: bindings.text(
+        process.env.GARMIN_TRAINING_CLIENT_ID ?? "3b15b8fd-47ca-49dd-8aca-a648c8a5363c",
+      ),
       PUBLIC_URL: bindings.text(
         mode === "development"
           ? "http://localhost:5173"

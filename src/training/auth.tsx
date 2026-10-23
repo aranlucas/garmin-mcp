@@ -73,6 +73,12 @@ export async function handleTraining(c: Context<AppBindings>): Promise<Response>
   // SAFETY: Worker dispatch supplies the full runtime context; Hono types only its common subset.
   const ctx = c.executionCtx as ExecutionContext;
 
+  const pageUrl = new URL(request.url);
+
+  if (request.method === "GET" && pageUrl.pathname === "/training/privacy") {
+    return c.render(<TrainingPrivacyPage />);
+  }
+
   const parsed = credentials.safeParse(env);
 
   if (!parsed.success) {
@@ -92,6 +98,10 @@ export async function handleTraining(c: Context<AppBindings>): Promise<Response>
   const issuer = `${origin}/training`;
   const resource = `${issuer}/mcp`;
   const callback = `${issuer}/callback`;
+
+  if (request.method === "GET" && url.pathname === "/training") {
+    return c.render(<TrainingHomePage resource={resource} />);
+  }
 
   const authorizationServer = new OAuthAuthorizationServer<Env>({
     issuer,
@@ -215,19 +225,12 @@ export async function handleTraining(c: Context<AppBindings>): Promise<Response>
     return resourceServer.fetch(request, env, ctx);
   }
 
-  if (request.method === "GET" && url.pathname === "/training") {
-    return c.render(<TrainingHomePage resource={resource} />);
-  }
-
-  if (request.method === "GET" && url.pathname === "/training/privacy") {
-    return c.render(<TrainingPrivacyPage />);
-  }
-
   if (url.pathname !== "/training/authorize" && url.pathname !== "/training/callback") {
     return authorizationServer.fetch(request, env, ctx);
   }
 
   const oauth = authorizationServer.getOAuthApi(env);
+  let upstreamStage = "consent";
 
   try {
     if (url.pathname === "/training/callback") {
@@ -260,11 +263,14 @@ export async function handleTraining(c: Context<AppBindings>): Promise<Response>
         return await c.render(<TrainingErrorPage />);
       }
 
+      upstreamStage = "token_exchange";
+
       const tokens = tokenSet.parse(
         await exchangeTrainingCode(config, code, data.data.verifier, callback),
       );
 
       const client = new TrainingClient(tokens.accessToken);
+      upstreamStage = "permissions";
       const permissions = await client.getPermissions();
 
       if (!permissions.includes("WORKOUT_IMPORT")) {
@@ -276,6 +282,7 @@ export async function handleTraining(c: Context<AppBindings>): Promise<Response>
         return new Response(null, { status: 302, headers: responseHeaders });
       }
 
+      upstreamStage = "identity";
       const { userId } = await client.getUserId();
 
       const { redirectTo } = await oauth.completeAuthorization({
@@ -306,7 +313,10 @@ export async function handleTraining(c: Context<AppBindings>): Promise<Response>
         c.header(name, value, { append: name === "set-cookie" });
       }
 
-      c.set("formAction", `${consentFormAction(details.redirectUri)} https://connect.garmin.com`);
+      c.set(
+        "formAction",
+        `${consentFormAction(details.redirectUri)} https://connect.garmin.com https://sso.garmin.com`,
+      );
 
       return await c.render(<TrainingConsentPage details={details} handle={consent.handle} />);
     }
@@ -381,6 +391,16 @@ export async function handleTraining(c: Context<AppBindings>): Promise<Response>
       error instanceof GarminError ||
       error instanceof z.ZodError
     ) {
+      // Never log the code, credentials, response body, validation issues or query string.
+      // oxlint-disable-next-line no-console -- Redacted Workers diagnostics for upstream failures.
+      console.error(
+        JSON.stringify({
+          event: "training_connection_failed",
+          stage: upstreamStage,
+          status: error instanceof GarminError ? error.status : 502,
+          reason: error instanceof GarminError ? error.message : "invalid_token_response",
+        }),
+      );
       c.status(error instanceof GarminError && error.status === 413 ? 413 : 502);
 
       return c.render(<TrainingErrorPage />);

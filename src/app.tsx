@@ -1,3 +1,5 @@
+import icon from "../assets/icon.svg?raw";
+import iconPng from "../assets/icon.png?inline";
 import { env } from "cloudflare:workers";
 import { insufficientScope, type OAuthResourceContext } from "@cloudflare/workers-oauth-provider";
 import { createMcpHonoApp } from "@modelcontextprotocol/hono";
@@ -33,6 +35,20 @@ app.use("*", async (c, next) => {
 app.get("/", (c) => c.render(<HomePage publicUrl={c.env.PUBLIC_URL} />));
 
 app.get("/privacy", (c) => c.render(<PrivacyPage />));
+
+app.get("/icon.svg", (c) =>
+  c.body(icon, 200, {
+    "Content-Type": "image/svg+xml",
+    "Cache-Control": "public, max-age=86400",
+  }),
+);
+
+app.get("/icon.png", (c) =>
+  c.body(Buffer.from(iconPng.slice(iconPng.indexOf(",") + 1), "base64"), 200, {
+    "Content-Type": "image/png",
+    "Cache-Control": "public, max-age=86400",
+  }),
+);
 
 app.get("/health", (c) => c.json({ status: "ok", service: "garmin-personal-mcp" }));
 

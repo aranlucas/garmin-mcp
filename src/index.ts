@@ -32,7 +32,7 @@ export default {
     try {
       if (isTrainingPath(new URL(request.url).pathname)) {
         // Gate before the app parses bodies or constructs Training OAuth handlers.
-        if (env.GARMIN_TRAINING_ENABLED !== "true") {
+        if (env.GARMIN_TRAINING_ENABLED !== "true" && publicUrl.pathname !== "/training/privacy") {
           return new Response("Not found", { status: 404 });
         }
 

@@ -86,3 +86,55 @@ it("registers a public client, binds consent to the browser, and redirects on de
     new URL(required(denied.headers.get("location"), "deny redirect")).searchParams.get("error"),
   ).toBe("access_denied");
 });
+
+it("serves the registered app's branding and Training privacy disclosures without Garmin credentials", async () => {
+  const icon = await get("/icon.svg");
+  expect(icon.status).toBe(200);
+  expect(icon.headers.get("Content-Type")).toContain("image/svg+xml");
+  const png = await get("/icon.png");
+  expect(png.status).toBe(200);
+  expect(png.headers.get("Content-Type")).toContain("image/png");
+  const bytes = new Uint8Array(await png.arrayBuffer());
+  expect(Array.from(bytes.slice(0, 8))).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+  const dimensions = new DataView(bytes.buffer);
+  expect(dimensions.getUint32(16)).toBe(300);
+  expect(dimensions.getUint32(20)).toBe(300);
+  const privacy = await get("/privacy");
+  expect(privacy.status).toBe(200);
+  expect(await privacy.text()).toContain("Training and AI processing");
+  const trainingPrivacy = await get("/training/privacy");
+  expect(trainingPrivacy.status).toBe(200);
+  const body = await trainingPrivacy.text();
+  expect(body).toContain("AI transparency");
+  expect(body).toContain("Cloudflare");
+  expect(body).toContain("withdraw permission");
+});
+
+it("serves the enabled Training resource, discovery and unauthenticated challenge", async () => {
+  const home = await get("/training");
+  expect(home.status).toBe(200);
+  expect(await home.text()).toContain(`${base}/training/mcp`);
+  const authorization = await get("/.well-known/oauth-authorization-server/training");
+  expect(authorization.status).toBe(200);
+  expect(await authorization.json()).toMatchObject({
+    issuer: `${base}/training`,
+    authorization_endpoint: `${base}/training/authorize`,
+    token_endpoint: `${base}/training/oauth/token`,
+    registration_endpoint: `${base}/training/oauth/register`,
+    scopes_supported: ["garmin:workouts:write", "offline_access"],
+    code_challenge_methods_supported: ["S256"],
+  });
+  const resource = await get("/.well-known/oauth-protected-resource/training/mcp");
+  expect(resource.status).toBe(200);
+  expect(await resource.json()).toMatchObject({
+    resource: `${base}/training/mcp`,
+    authorization_servers: [`${base}/training`],
+    scopes_supported: ["garmin:workouts:write"],
+  });
+  const challenged = await get("/training/mcp", { method: "POST" });
+  expect(challenged.status).toBe(401);
+  expect(challenged.headers.get("WWW-Authenticate")).toContain("garmin:workouts:write");
+  expect(challenged.headers.get("WWW-Authenticate")).toContain(
+    "oauth-protected-resource/training/mcp",
+  );
+});

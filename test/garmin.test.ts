@@ -31,6 +31,23 @@ function jsonFetcher(data: GarminJson): typeof fetch {
 }
 
 describe("Garmin boundaries", () => {
+  it("constructs supported Workers Requests for Personal token and data calls", async () => {
+    const fetcher = vi.fn<typeof fetch>((input, init) => {
+      const request = new Request(input, init);
+      expect(request.redirect).toBe("manual");
+
+      return request.url.endsWith(GARMIN_TOKEN_PATH)
+        ? tokenResponse()
+        : Promise.resolve(Response.json({ totalSteps: 12 }));
+    });
+
+    const client = new GarminClient(apiKey, fetcher);
+    expect(
+      await client.get(zUserDailySummaryDto, "/usersummary-service/usersummary/daily"),
+    ).toMatchObject({ totalSteps: 12 });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it("bounds streamed responses and rejects malformed token payloads", async () => {
     await expect(readBounded(new Response("too large"), 3)).rejects.toThrow("too large");
     await expect(obtainToken(apiKey, unrecognizedToken)).rejects.toThrow("unrecognized");

@@ -52,7 +52,7 @@ async function checkedFetch(
   try {
     response = await fetcher(GARMIN_BASE + path, {
       ...init,
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.any([AbortSignal.timeout(20_000), ...(init.signal ? [init.signal] : [])]),
     });
   } catch {
