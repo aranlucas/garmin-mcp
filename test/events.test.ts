@@ -334,6 +334,11 @@ it("normalizes subscription identity, clamps TTL, encrypts secrets, and rotates 
   };
 
   expect((await f.subscribe(secondParams)).id).toBe(first.id);
+  expect(await f.subscribe({ ...secondParams, cursor: null, maxAgeMs: 0 })).toMatchObject({
+    id: first.id,
+    cursor: null,
+    truncated: false,
+  });
   expect(Date.parse(first.refreshBefore) - Date.now()).toBeGreaterThan(299000);
   await f.push({ activities: [f.activity()] });
 
@@ -383,6 +388,7 @@ it("retains a stable event id over transient retries and clears permanent or exh
     f.state.callbackStatus = status;
     await f.flush();
     expect(await f.count("event_deliveries")).toBe(0);
+    expect(await f.count("event_subscriptions")).toBe(1);
   }
 
   await f.push({ activities: [f.activity("exhausted")] });

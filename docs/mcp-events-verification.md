@@ -1,12 +1,34 @@
-# MCP Events verification against OpenAI's guide
+# MCP Events verification against OpenAI and the working-group draft
 
-Checked **2026-10-24** against the complete [OpenAI MCP Events guide](https://developers.openai.com/plugins/build/mcp-events). This records local protocol and lifecycle evidence. It does not certify a live ChatGPT integration.
+Checked **2026-10-24** against the complete [OpenAI MCP Events guide](https://developers.openai.com/plugins/build/mcp-events) and the working group's [design sketch at `d5316be`](https://github.com/modelcontextprotocol/experimental-ext-triggers-events/blob/d5316be214be2e76e51462069c1d67e00a5a7619/docs/design-sketch-proposal.md). This records local protocol and lifecycle evidence for the OpenAI-supported webhook profile. It does not certify a live ChatGPT integration or claim conformance with every feature of the newer draft.
 
 ## Audit corrections
 
 The initial PR had the documented event methods and signed webhook envelope, but re-challenged callbacks on every refresh. Verification now caches a successful proof for five minutes, keyed by authenticated principal, Garmin account, callback URL, and signing key. Hits do not renew the proof's expiry. Expired proofs and new keys require a new challenge. Revocation and explicit deletion invalidate the cache; durable alarms remove expired entries.
 
 Verification failures now distinguish timeout, connection, TLS, HTTP, and challenge failures in the safe `data.reason` field of `-32015`. Upstream URLs, response bodies, and raw exception messages remain private. An explicit 256 KiB UTF-8 bound now protects the complete serialized request body at the send boundary.
+
+Verification requests now use unique `msg_verification_<random>` IDs, matching the draft's control-envelope format and the OpenAI example. Their bodies contain `type: "verification"`; ordinary occurrences retain `eventId`, `name`, `timestamp`, `data`, and `cursor`, with application fields confined to `data`.
+
+## Working-group draft comparison
+
+The supported subset matches the draft's event discovery/schema model, authenticated compound subscription identity, idempotent refresh, independent signed delivery, client-supplied keys, TTL negotiation, and no-replay behavior. Specific checks also cover omitted versus explicit-null cursors, ignoring `maxAgeMs` without replay, fresh signing times, and treating `410`/`413` as terminal for the individual event while retaining the subscription.
+
+These choices are expressly permitted by the draft:
+
+- **Webhook-only delivery:** no delivery mode is mandatory. Poll and push support are optional.
+- **No replay:** `cursor: null` and `truncated: false` are valid. `maxAgeMs` is ignored for such event types. Durable pending deliveries do not imply a client replay API.
+- **Finite TTLs:** the five-minute floor is allowed to prevent excessive refreshes. A request for no expiry may receive a finite expiration; long grants must survive restart, as this implementation does.
+- **Minimal payloads:** event references and bounded summaries let clients fetch full data with existing tools. The optional `deliveryStatus`, suspension mechanism, and asymmetric server signatures are omitted. `listChanged` is not advertised.
+
+Two wire differences are intentional for compatibility with the current OpenAI guide:
+
+- **Error codes:** the draft uses `-32023..-32027` for NotFound through CallbackEndpointError; the documented OpenAI/DIGITS profile uses `-32011..-32015`. `InvalidParams` remains `-32602`. The server keeps the OpenAI profile's codes instead of silently changing error semantics. HTTP authorization also runs before method dispatch, using the existing MCP `401` challenge for unauthenticated requests.
+- **Termination controls:** the draft describes signed `terminated` messages after revocation or event removal. OpenAI explicitly excludes `gap` and `terminated` controls. This implementation removes affected subscriptions and deliveries without posting unsupported controls. It has no replay gaps to report.
+
+The verification cache is additionally scoped to the signing key, so a replacement key requires proof that the endpoint accepts it. Persisting the bounded proof with the Durable Object avoids a challenge on every routine eviction; expiry remains fixed. The draft recommends per-destination-host verification throttling; this implementation currently enforces an account-wide ten-challenges-per-minute budget, not a deployment-wide cross-account host budget. That recommendation remains an operational hardening option, not a claim of full draft coverage.
+
+The draft's server SDK snippets are guidance for proposed Events APIs. The SDK REPL's `InMemoryEventStore` implements session/SSE replay instead; it does not supply the webhook methods, callback verification, or delivery outbox used here.
 
 ## Local evidence
 

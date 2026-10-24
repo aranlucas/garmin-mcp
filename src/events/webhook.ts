@@ -120,7 +120,7 @@ export async function verifyCallback(
   try {
     const response = await postWebhook(
       url,
-      `verify_${crypto.randomUUID()}`,
+      `msg_verification_${crypto.randomUUID()}`,
       subscription,
       [secret],
       JSON.stringify({ type: "verification", challenge }),

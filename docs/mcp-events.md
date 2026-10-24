@@ -48,6 +48,6 @@ Delivered or exhausted bodies are removed from the outbox; the normal source sum
 
 Worker tests use a fake Auth RPC service, mocked Garmin permissions, and synthetic callback receivers. They cover discovery through authenticated HTTP, signed fan-out, filtering, duplicate/import suppression, sleep replacement, eviction, refresh/key rotation, retries, expiry, unsubscribe, account separation, deletion, and in-flight revocation. No live Garmin workouts or calendar fixtures are created. Live host subscription and callback delivery still require verification after deployment.
 
-The implementation was also audited against the linked OpenAI guide. See [verification evidence and remaining limits](mcp-events-verification.md), including callback caching, the complete authenticated HTTP lifecycle, runtime networking, and existing Training write semantics.
+The implementation was also audited against the OpenAI guide and the working group's design sketch. See [verification evidence, intentional profile differences, and remaining limits](mcp-events-verification.md), including callback caching, the complete authenticated HTTP lifecycle, runtime networking, error-code/termination-control differences, and existing Training write semantics.
 
 Recovery bundles, activity-update events, goal crossings, and schedule reminders remain future work; see the [event research and recommendations](garmin-events.md).

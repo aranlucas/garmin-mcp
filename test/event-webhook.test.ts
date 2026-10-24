@@ -98,11 +98,13 @@ it.each([
 
 it("verifies a fresh signed challenge and rejects malformed callback echoes", async () => {
   const challenges: string[] = [];
+  const verificationIds: string[] = [];
   vi.stubGlobal(
     "fetch",
     vi.fn<typeof fetch>().mockImplementation((_input, init) => {
       const body = z.string().parse(init?.body);
       const headers = Object.fromEntries(new Headers(init?.headers));
+      verificationIds.push(z.string().parse(headers["webhook-id"]));
 
       const request = z
         .object({ type: z.literal("verification"), challenge: z.string() })
@@ -116,6 +118,8 @@ it("verifies a fresh signed challenge and rejects malformed callback echoes", as
   await verifyCallback(callback, "sub-1", secret);
   await verifyCallback(callback, "sub-1", secret);
   expect(new Set(challenges).size).toBe(2);
+  expect(new Set(verificationIds).size).toBe(2);
+  expect(verificationIds.every((id) => id.startsWith("msg_verification_"))).toBe(true);
   vi.stubGlobal(
     "fetch",
     vi.fn(() => Promise.resolve(Response.json({ challenge: "wrong" }))),
