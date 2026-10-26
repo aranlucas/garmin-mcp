@@ -23,8 +23,14 @@ export default defineConfig({
                   compatibilityDate: "2026-10-21",
                   script: `
                   import { WorkerEntrypoint } from "cloudflare:workers";
+                  const replies = new Map();
                   export class GarminTokens extends WorkerEntrypoint {
+                    setReplies(subject, values) {
+                      replies.set(subject, values);
+                    }
                     accessToken(subject) {
+                      const values = replies.get(subject);
+                      if (values?.length) return values.length > 1 ? values.shift() : values[0];
                       return subject.startsWith("unlinked-") ? null : {
                         accessToken: "fixture-" + subject,
                         expiresAt: Date.now() + 60000,

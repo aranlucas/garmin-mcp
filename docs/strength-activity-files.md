@@ -20,6 +20,8 @@ Only `https://apis.garmin.com/wellness-api/rest/activityFile` with a single `id`
 
 Callback credentials live only in private account storage until claim or expiry. Tools expose neither callback URLs nor parser errors. Original FIT bytes are not retained. All decoded FIT data persists until deletion, disconnect, or withdrawal of activity permission. Versioned completion prevents in-flight downloads from restoring deleted data. Expiry cleanup shares the existing event alarm without replacing its schedule. File notifications do not create workout-completed events.
 
+A null, malformed or expired Auth reply is unavailable, not proof of withdrawal: Auth also returns null during refresh outages. Before claim, keep the job for bounded retry; after claim, discard only that download's payload and never consume its URL twice. Unrelated summaries, cached files and subscriptions remain intact. Explicit disconnect, category withdrawal and usable credentials for a mismatched account retain their existing destructive policy. See [authorization and retention contracts](authorization-retention.md).
+
 ## Recorded fields and availability
 
 The pinned official `@garmin/fitsdk` handles binary decoding, CRC validation, units, and profile mappings. Validation enforces a complete single activity file, at most 25,000 messages including definitions, 2,000 sets, and 4,000 exercise entries. Invalid files fail without partial messages. The SDK's unsupported compressed-timestamp records are rejected.

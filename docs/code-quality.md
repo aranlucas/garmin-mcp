@@ -1,5 +1,7 @@
 # Code quality audit
 
+Historical review of the October 23 Personal API implementation. Its OAuth/KV and module descriptions below are not the current shared-Auth architecture. Use the [README](../README.md), [current event contract](mcp-events.md) and [authorization/retention review](authorization-retention.md) for maintained behavior.
+
 Reviewed on **2026-10-23**, starting from `24fa7e2`. The review covered every application module, test, build configuration, and the published Garmin API snapshot. The starting branch was pushed before editing; the baseline passed 15 tests, type checking, linting, and formatting.
 
 ## Findings and changes
