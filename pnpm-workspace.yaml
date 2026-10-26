@@ -1,6 +1,11 @@
 allowBuilds:
   esbuild: false
   workerd: false
+# Development-tool transitive pins lag security fixes. Scope overrides to the affected versions.
+overrides:
+  js-yaml@4.2.0: 4.3.2
+  zod@4.6.5: 4.6.7
+  undici@7.29.1: 7.30.1
 minimumReleaseAgeExclude:
   - vite@8.3.5
   - portless@0.15.11
