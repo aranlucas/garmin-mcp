@@ -939,7 +939,8 @@ it("purges only withdrawn event categories and rejects account mismatches", asyn
     { ...f.params(), name: "garmin.sleep.available" },
   );
 
-  expect(unlinked).toMatchObject({ ok: false, code: -32012 });
+  // The broker's null also represents refresh outages, so it cannot establish withdrawal.
+  expect(unlinked).toMatchObject({ ok: false, code: -32603 });
 });
 
 it("cannot resurrect a subscription cancelled or deleted during callback verification", async () => {

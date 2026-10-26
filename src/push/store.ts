@@ -5,7 +5,7 @@ import { logEvent, type IngestDiagnostic } from "../events/diagnostics";
 import { ActivityFiles } from "../activity/store";
 import type { ActivityFileNotification, FitDetails } from "../activity/files";
 import { fetchActivityFile } from "../activity/files";
-import { garminCredential, type AuthBroker } from "../auth";
+import { classifyGarminCredential, type AuthBroker, type GarminCredential } from "../auth";
 import { TrainingClient } from "../training/client";
 import {
   eventPermission,
@@ -233,7 +233,7 @@ export class GarminUserData extends DurableObject<Env> {
     );
     await this.events.schedule();
   }
-  private async downloadActivityFile() {
+  private pendingActivityDownload() {
     const owner = this.activityOwner();
     const activityId = this.files.pendingId();
 
@@ -255,81 +255,114 @@ export class GarminUserData extends DurableObject<Env> {
       Date.now() + 60_000,
     );
 
+    return { owner, activityId };
+  }
+
+  private async activityCredential(owner: ActivityOwner): Promise<GarminCredential | null> {
+    // SAFETY: AUTH is the existing private GarminTokens RPC contract, validated below.
+    const broker = this.env.AUTH as AuthBroker;
+
+    const access = classifyGarminCredential(
+      await broker.accessToken(owner.subject),
+      owner.garmin_id,
+      Date.now(),
+    );
+
+    if (access.status === "mismatch") {
+      await this.revoke();
+
+      return null;
+    }
+
+    return access.status === "allowed" ? access.credential : null;
+  }
+
+  private async activityPermission(client: TrainingClient) {
+    if ((await client.getPermissions()).includes("ACTIVITY_EXPORT")) {
+      return true;
+    }
+
+    this.files.clear();
+
+    return false;
+  }
+
+  private async decodeActivityDownload(
+    activityId: string,
+    callback: string,
+    summaryId: string,
+    accessToken: string,
+  ): Promise<FitDetails | null> {
     try {
-      // SAFETY: AUTH is the existing private GarminTokens RPC contract, validated below.
-      const broker = this.env.AUTH as AuthBroker;
-      const credential = garminCredential.safeParse(await broker.accessToken(owner.subject));
+      return {
+        ...(await fetchActivityFile(callback, accessToken, AbortSignal.timeout(20_000), fetch)),
+        activityId,
+        fileSummaryId: summaryId,
+      };
+    } catch {
+      // One-use downloads cannot be retried after an ambiguous failure. Never log credentials.
+      return null;
+    }
+  }
 
-      if (
-        !credential.success ||
-        credential.data.garminUserId !== owner.garmin_id ||
-        credential.data.expiresAt <= Date.now()
-      ) {
-        await this.revoke();
+  private async downloadClaimedFile(
+    owner: ActivityOwner,
+    activityId: string,
+    credential: GarminCredential,
+    client: TrainingClient,
+  ) {
+    const file = this.files.claim(activityId);
 
-        return;
-      }
+    if (!file.callback || !file.version || !file.summaryId) {
+      return;
+    }
 
-      const client = new TrainingClient(credential.data.accessToken);
+    const decoded = await this.decodeActivityDownload(
+      activityId,
+      file.callback,
+      file.summaryId,
+      credential.accessToken,
+    );
 
-      if (!(await client.getPermissions()).includes("ACTIVITY_EXPORT")) {
-        this.files.clear();
+    if (!(await this.activityPermission(client))) {
+      return;
+    }
 
-        return;
-      }
+    const current = await this.activityCredential(owner);
+    // After claim, failed authorization discards this payload, never unrelated retained data.
+    this.finishActivityFile(activityId, file.version, current ? decoded : null);
 
-      if (this.activityBlocked()) {
-        return;
-      }
-
-      const file = this.files.claim(activityId);
-
-      if (!file.callback || !file.version || !file.summaryId) {
-        return;
-      }
-
-      let decoded: FitDetails | null = null;
-
-      try {
-        decoded = {
-          ...(await fetchActivityFile(
-            file.callback,
-            credential.data.accessToken,
-            AbortSignal.timeout(20_000),
-            fetch,
-          )),
-          activityId,
-          fileSummaryId: file.summaryId,
-        };
-      } catch {
-        // One-use downloads cannot be retried after an ambiguous failure. Never log credentials.
-      }
-
-      if (!(await client.getPermissions()).includes("ACTIVITY_EXPORT")) {
-        this.files.clear();
-
-        return;
-      }
-
-      const current = garminCredential.safeParse(await broker.accessToken(owner.subject));
-
-      if (
-        !current.success ||
-        current.data.garminUserId !== owner.garmin_id ||
-        current.data.expiresAt <= Date.now()
-      ) {
-        await this.revoke();
-
-        return;
-      }
-
-      this.finishActivityFile(activityId, file.version, decoded);
+    if (current) {
       this.ctx.storage.sql.exec(
         "INSERT OR REPLACE INTO settings VALUES ('fileNextAttempt',?)",
         Date.now() + 2000,
       );
+    }
+  }
+
+  private async downloadActivityFile() {
+    const pending = this.pendingActivityDownload();
+
+    if (!pending) {
+      return;
+    }
+
+    try {
+      const credential = await this.activityCredential(pending.owner);
+
+      if (!credential) {
+        return;
+      }
+
+      const client = new TrainingClient(credential.accessToken);
+
+      if (!(await this.activityPermission(client)) || this.activityBlocked()) {
+        return;
+      }
+
+      await this.downloadClaimedFile(pending.owner, pending.activityId, credential, client);
     } catch {
-      // Keep unclaimed jobs for the next alarm if Auth or permission lookup is unavailable.
+      // Retry unclaimed jobs; claimed URLs stay consumed and become unavailable on claim expiry.
     }
   }
   async ingestActivityFiles(files: ActivityFileNotification[]) {

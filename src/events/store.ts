@@ -1,9 +1,8 @@
 import { createHash } from "node:crypto";
 import { ProtocolError } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { garminCredential, type AuthBroker } from "../auth";
+import { classifyGarminCredential, type AuthBroker } from "../auth";
 import { TrainingClient } from "../training/client";
-import { GarminError } from "../garmin-error";
 import { logEvent, type DeliveryOutcome, type IngestDiagnostic } from "./diagnostics";
 import type { StoredSummary } from "../push/store";
 import {
@@ -134,32 +133,24 @@ export class GarminEvents {
     try {
       // SAFETY: AUTH is the private GarminTokens entrypoint; validate every RPC reply.
       const broker = this.env.AUTH as AuthBroker;
-      const result = await broker.accessToken(owner.subject);
 
-      if (result === null) {
-        return "denied";
+      const access = classifyGarminCredential(
+        await broker.accessToken(owner.subject),
+        owner.garminUserId,
+        Date.now(),
+      );
+
+      if (access.status !== "allowed") {
+        return access.status === "mismatch" ? "denied" : "unavailable";
       }
 
-      const credential = garminCredential.safeParse(result);
-
-      if (!credential.success || credential.data.expiresAt <= Date.now()) {
-        return "unavailable";
-      }
-
-      if (credential.data.garminUserId !== owner.garminUserId) {
-        return "denied";
-      }
-
-      const permissions = await new TrainingClient(credential.data.accessToken).getPermissions();
+      const permissions = await new TrainingClient(access.credential.accessToken).getPermissions();
 
       return permissions.includes(eventPermission(name)) && !this.blocked(name)
         ? "allowed"
         : "denied";
-    } catch (error) {
-      if (error instanceof GarminError && [401, 403, 412].includes(error.status)) {
-        return "denied";
-      }
-
+    } catch {
+      // Failed authorization (including token expiry) is not confirmed permission withdrawal.
       return "unavailable";
     }
   }
