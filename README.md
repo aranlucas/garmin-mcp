@@ -99,6 +99,8 @@ Other webhook providers can have separate `/webhook/<source>` routes with their 
 
 Auth's Disconnect action calls Garmin's required `DELETE /partner-gateway/rest/user/registration`, purges retained summaries via an authenticated server request, and removes the linked account. Removing only an MCP client stops that client's access; disconnect Garmin to stop collection. Review [privacy and AI processing](https://garmin-mcp.aranlucas.workers.dev/privacy) before connecting an assistant.
 
+Temporary credential or permission-lookup failures deny access without deleting retained history. Auth's null response can mean a refresh outage, so background jobs do not infer withdrawal from it. Explicit disconnect and sharing withdrawal remain destructive. See [authorization, retry and retention contracts](docs/authorization-retention.md) for file claims, event subscriptions, regression evidence and development dependency patches.
+
 ## Configuration and development
 
 The shared Auth implementation is [sidequest-labs/auth](https://github.com/sidequest-labs/auth). Auth requires `GARMIN_CLIENT_ID`, private `GARMIN_CLIENT_SECRET`, `GARMIN_MCP_RESOURCE`, the `GarminTokens` RPC export, and its `GARMIN_BROKER` binding. The connector uses `AUTH_ISSUER=https://auth.aranlucas.workers.dev/api/auth` (the issuer includes `/api/auth`), an `AUTH` binding to the `auth` Worker's `GarminTokens` export, `USER_DATA`, and the private `GARMIN_PUSH_TOKEN`. Application credentials are server configuration, never user-supplied API keys.
