@@ -490,13 +490,18 @@ describe("Training client request boundaries", () => {
       const fetcher = vi.fn<typeof fetch>(
         (_input, init) =>
           new Promise((_resolve, reject) => {
-            required(init?.signal, "outbound cancellation signal").addEventListener(
-              "abort",
-              () => {
-                reject(new DOMException(privateValue, "AbortError"));
-              },
-              { once: true },
-            );
+            const outbound = required(init?.signal, "outbound cancellation signal");
+
+            const abort = () => {
+              reject(new DOMException(privateValue, "AbortError"));
+            };
+
+            // Like fetch, reject a signal that aborted before the request was sent.
+            if (outbound.aborted) {
+              abort();
+            }
+
+            outbound.addEventListener("abort", abort, { once: true });
           }),
       );
 
@@ -803,11 +808,10 @@ describe("Training v2 contract regressions", () => {
 
 describe("Training schema boundaries", () => {
   it("accepts a common repeat block and preserves strength exercise, repetitions, and kilogram fields", () => {
-    expect(createWorkoutInput.parse({ workout }).workout).toEqual({
-      ...workout,
-      workoutProvider: "Garmin MCP",
-      workoutSourceId: "Garmin MCP",
-    });
+    const parsed = createWorkoutInput.parse({ workout }).workout;
+    expect(parsed).toEqual(workout);
+    expect(parsed).not.toHaveProperty("workoutProvider");
+    expect(parsed).not.toHaveProperty("workoutSourceId");
 
     const strength = {
       workoutName: "Test strength session",

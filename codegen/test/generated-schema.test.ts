@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 
-import { zActivityTypeDto } from "../../src/garmin-api/zod.gen.ts";
+import { zActivityTypeDto } from "../../src/garmin-api/personal/zod.gen.ts";
+import { zWorkoutV2 } from "../../src/garmin-api/training/zod.gen.ts";
 
 test("generated activity schemas retain Garmin extensions", () => {
   const activity = {
@@ -10,4 +11,10 @@ test("generated activity schemas retain Garmin extensions", () => {
   };
 
   expect(zActivityTypeDto.parse(activity)).toEqual(activity);
+});
+
+test("generated training schemas accept workouts without a provider", () => {
+  const workout = { workoutName: "Push-ups", sport: "STRENGTH_TRAINING", segments: [] };
+
+  expect(zWorkoutV2.parse(workout)).toEqual(workout);
 });

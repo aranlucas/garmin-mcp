@@ -1,24 +1,30 @@
 import * as z from "zod";
 import { readBounded } from "../garmin";
 import { GarminError as TrainingError } from "../garmin-error";
+import { createClient, type Client } from "../garmin-api/training/client";
+import { client as trainingApi } from "../garmin-api/training/client.gen";
+import * as training from "../garmin-api/training/sdk.gen";
+import type { WorkoutV2 } from "../garmin-api/training/types.gen";
+import * as user from "../garmin-api/user/sdk.gen";
+import { client as userApi } from "../garmin-api/user/client.gen";
 import type { WorkoutInput, ScheduleInput } from "./schemas";
 
 export const TRAINING_BASE = "https://apis.garmin.com";
 
 export { TrainingError };
 
-type TrainingBody =
-  | WorkoutInput
-  | ScheduleInput
-  | (WorkoutInput & { workoutId: number; ownerId: number })
-  | (ScheduleInput & { scheduleId: number });
-
 type UserIdentity = { userId: string };
+
+/** Generated-SDK options shared by every call: raw body, so responses stay bounded and validated. */
+type CallOptions = { client: Client; parseAs: "stream"; throwOnError: true };
+
+type SdkResult = { request: Request; response: Response };
 
 async function checkedFetch(
   url: string,
   init: RequestInit,
   fetcher: typeof fetch,
+  deadline: AbortSignal,
 ): Promise<Response> {
   let response: Response;
 
@@ -26,7 +32,7 @@ async function checkedFetch(
     response = await fetcher(url, {
       ...init,
       redirect: "manual",
-      signal: AbortSignal.any([AbortSignal.timeout(20_000), ...(init.signal ? [init.signal] : [])]),
+      signal: AbortSignal.any([deadline, ...(init.signal ? [init.signal] : [])]),
     });
   } catch {
     throw new TrainingError(
@@ -112,50 +118,63 @@ export class TrainingClient {
 
   private async request<Output>(
     schema: z.ZodType<Output>,
-    path: string,
-    method: "GET" | "POST" | "PUT" | "DELETE",
-    signal?: AbortSignal,
-    body?: TrainingBody,
+    signal: AbortSignal | undefined,
+    call: (options: CallOptions) => Promise<SdkResult>,
+    api: Client = trainingApi,
   ): Promise<Output> {
-    const headers = new Headers({
-      Authorization: `Bearer ${this.accessToken}`,
-      Accept: "application/json",
+    // Start the deadline when the tool call starts, not after the SDK prepares the request.
+    const deadline = AbortSignal.timeout(20_000);
+
+    // Per-request copy of the generated client: keeps the spec's base URL without sharing the token.
+    const client = createClient({
+      ...api.getConfig(),
+      headers: { Authorization: `Bearer ${this.accessToken}`, Accept: "application/json" },
+      // The SDK hands over a built Request; pass its parts so checkedFetch owns redirect and abort.
+      fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+
+        const forwarded: RequestInit = {
+          method: request.method,
+          headers: request.headers,
+          signal: signal ?? null,
+        };
+
+        if (request.body !== null) {
+          forwarded.body = await request.text();
+        }
+
+        return checkedFetch(request.url, forwarded, this.fetcher, deadline);
+      },
     });
 
-    const init: RequestInit = { method, headers, signal: signal ?? null };
-
-    if (body !== undefined) {
-      headers.set("Content-Type", "application/json");
-      init.body = JSON.stringify(body);
-    }
-
-    const response = await checkedFetch(TRAINING_BASE + path, init, this.fetcher);
+    const { request, response } = await call({ client, parseAs: "stream", throwOnError: true });
+    const write = request.method !== "GET";
 
     // Garmin documents 204 for successful mutations. Never invent an object ID.
-    if (response.status === 204 && method !== "GET") {
+    if (response.status === 204 && write) {
       await response.body?.cancel();
 
       return schema.parse({ accepted: true });
     }
 
-    return validatedJson(schema, response, 1024 * 1024, signal, method !== "GET");
+    return validatedJson(schema, response, 1024 * 1024, signal, write);
   }
 
   getUserId(signal?: AbortSignal): Promise<UserIdentity> {
     return this.request(
       z.object({ userId: z.string().min(1) }),
-      "/partner-gateway/rest/user/id",
-      "GET",
       signal,
+      (options) => user.userId(options),
+      userApi,
     );
   }
 
   getPermissions(signal?: AbortSignal): Promise<string[]> {
     const result = this.request(
       z.object({ permissions: z.array(z.string()) }),
-      "/partner-gateway/rest/user/permissions",
-      "GET",
       signal,
+      (options) => user.userPermissions(options),
+      userApi,
     );
 
     return result.then(({ permissions }) => permissions);
@@ -175,7 +194,15 @@ export class TrainingClient {
     workout: WorkoutInput,
     signal?: AbortSignal,
   ): Promise<Output> {
-    return this.request(schema, "/workoutportal/workout/v2", "POST", signal, workout);
+    // The published spec only lists the V1 create; V2 create lives under /workoutportal.
+    return this.request(schema, signal, ({ client, ...options }) =>
+      client.post({
+        ...options,
+        baseUrl: TRAINING_BASE,
+        url: "/workoutportal/workout/v2",
+        body: workout,
+      }),
+    );
   }
 
   getWorkout<Output>(
@@ -183,7 +210,9 @@ export class TrainingClient {
     workoutId: number,
     signal?: AbortSignal,
   ): Promise<Output> {
-    return this.request(schema, `/training-api/workout/v2/${workoutId}`, "GET", signal);
+    return this.request(schema, signal, (options) =>
+      training.getWorkout1({ ...options, path: { workoutId } }),
+    );
   }
 
   scheduleWorkout<Output>(
@@ -191,7 +220,10 @@ export class TrainingClient {
     schedule: ScheduleInput,
     signal?: AbortSignal,
   ): Promise<Output> {
-    return this.request(schema, "/training-api/schedule/", "POST", signal, schedule);
+    // Keep the verified trailing slash; the spec's /schedule create has not been tried live.
+    return this.request(schema, signal, ({ client, ...options }) =>
+      client.post({ ...options, url: "/schedule/", body: schedule }),
+    );
   }
 
   getSchedule<Output>(
@@ -199,7 +231,9 @@ export class TrainingClient {
     scheduleId: number,
     signal?: AbortSignal,
   ): Promise<Output> {
-    return this.request(schema, `/training-api/schedule/${scheduleId}`, "GET", signal);
+    return this.request(schema, signal, (options) =>
+      training.getWorkoutSchedule({ ...options, path: { workoutScheduleId: scheduleId } }),
+    );
   }
 
   updateWorkout<Output>(
@@ -209,11 +243,15 @@ export class TrainingClient {
     workout: WorkoutInput,
     signal?: AbortSignal,
   ): Promise<Output> {
-    return this.request(schema, `/training-api/workout/v2/${workoutId}`, "PUT", signal, {
-      ...workout,
-      workoutId,
-      ownerId,
-    });
+    return this.request(schema, signal, (options) =>
+      training.updateWorkout1({
+        ...options,
+        path: { workoutId },
+        // SAFETY: workoutInput already parsed this body; Zod types optional keys as `T | undefined`
+        // but omits absent keys, which is the shape WorkoutV2 expects.
+        body: { ...workout, workoutId, ownerId } as WorkoutV2,
+      }),
+    );
   }
 
   deleteWorkout<Output>(
@@ -221,7 +259,9 @@ export class TrainingClient {
     workoutId: number,
     signal?: AbortSignal,
   ): Promise<Output> {
-    return this.request(schema, `/training-api/workout/v2/${workoutId}`, "DELETE", signal);
+    return this.request(schema, signal, (options) =>
+      training.deleteWorkout1({ ...options, path: { workoutId } }),
+    );
   }
 
   updateSchedule<Output>(
@@ -230,10 +270,13 @@ export class TrainingClient {
     schedule: ScheduleInput,
     signal?: AbortSignal,
   ): Promise<Output> {
-    return this.request(schema, `/training-api/schedule/${scheduleId}`, "PUT", signal, {
-      ...schedule,
-      scheduleId,
-    });
+    return this.request(schema, signal, (options) =>
+      training.updateWorkoutSchedule({
+        ...options,
+        path: { workoutScheduleId: scheduleId },
+        body: { ...schedule, scheduleId },
+      }),
+    );
   }
 
   deleteSchedule<Output>(
@@ -241,7 +284,9 @@ export class TrainingClient {
     scheduleId: number,
     signal?: AbortSignal,
   ): Promise<Output> {
-    return this.request(schema, `/training-api/schedule/${scheduleId}`, "DELETE", signal);
+    return this.request(schema, signal, (options) =>
+      training.deleteWorkoutSchedule({ ...options, path: { workoutScheduleId: scheduleId } }),
+    );
   }
 
   listSchedules<Output>(
@@ -250,8 +295,8 @@ export class TrainingClient {
     endDate: string,
     signal?: AbortSignal,
   ): Promise<Output> {
-    const query = new URLSearchParams({ startDate, endDate });
-
-    return this.request(schema, `/training-api/schedule?${query}`, "GET", signal);
+    return this.request(schema, signal, (options) =>
+      training.queryWorkoutScheduleByDates({ ...options, query: { startDate, endDate } }),
+    );
   }
 }
