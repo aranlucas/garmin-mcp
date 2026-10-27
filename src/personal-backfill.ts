@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { zSummarizedActivityDto } from "./garmin-api/zod.gen";
+import { zSummarizedActivityDto } from "./garmin-api/personal/zod.gen";
 import { readBounded } from "./garmin";
 import { calendarDate } from "./tool-input";
 import { summary, userId } from "./push/schemas";

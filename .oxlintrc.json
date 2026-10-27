@@ -27,7 +27,8 @@
     "**/.roo/**",
     "**/.windsurf/**",
     "**/.cloudflare/**",
-    "**/.wrangler/**"
+    "**/.wrangler/**",
+    "src/garmin-api/**"
   ],
   "env": {
     "worker": true

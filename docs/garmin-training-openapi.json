@@ -1,0 +1,912 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Workout Portal"
+  },
+  "servers": [
+    {
+      "url": "https://apis.garmin.com/training-api/workout",
+      "description": "Prod"
+    }
+  ],
+  "paths": {
+    "/workout/{workoutId}": {
+      "get": {
+        "tags": ["Workout Portal"],
+        "description": "This request is to retrieve a workout by/for a user",
+        "operationId": "GET_WORKOUT",
+        "parameters": [
+          {
+            "name": "workoutId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workout"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": ["Workout Portal"],
+        "description": "This request is to update a workout by/for a user",
+        "operationId": "UPDATE_WORKOUT",
+        "parameters": [
+          {
+            "name": "workoutId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Workout"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Workout Portal"],
+        "description": "This request is to delete a workout by/for a user",
+        "operationId": "DELETE_WORKOUT",
+        "parameters": [
+          {
+            "name": "workoutId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/workout/v2/{workoutId}": {
+      "get": {
+        "tags": ["Workout Portal V2"],
+        "description": "This request is to retrieve a workout by/for a user",
+        "operationId": "GET_WORKOUT_1",
+        "parameters": [
+          {
+            "name": "workoutId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkoutV2"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": ["Workout Portal V2"],
+        "description": "This request is to update a workout by/for a user",
+        "operationId": "UPDATE_WORKOUT_1",
+        "parameters": [
+          {
+            "name": "workoutId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkoutV2"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Workout Portal V2"],
+        "description": "This request is to delete a workout by/for a user",
+        "operationId": "DELETE_WORKOUT_1",
+        "parameters": [
+          {
+            "name": "workoutId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/schedule/{workoutScheduleId}": {
+      "get": {
+        "tags": ["Workout Portal"],
+        "description": "This request is to retrieve a workout schedule by/for a user",
+        "operationId": "GET_WORKOUT_SCHEDULE",
+        "parameters": [
+          {
+            "name": "workoutScheduleId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkoutSchedule"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": ["Workout Portal"],
+        "description": "This request is to update a workout schedule by/for a user",
+        "operationId": "UPDATE_WORKOUT_SCHEDULE",
+        "parameters": [
+          {
+            "name": "workoutScheduleId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkoutSchedule"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Workout Portal"],
+        "description": "This request is to delete a workout schedule by/for a user",
+        "operationId": "DELETE_WORKOUT_SCHEDULE",
+        "parameters": [
+          {
+            "name": "workoutScheduleId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/workout": {
+      "post": {
+        "tags": ["Workout Portal"],
+        "description": "This request is to create a workout by/for a user:",
+        "operationId": "CREATE_WORKOUT",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Workout"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workout"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/schedule": {
+      "get": {
+        "tags": ["Workout Portal"],
+        "description": "This request is used to retrieve workout schedule by/for a user by date range:",
+        "operationId": "QUERY_WORKOUT_SCHEDULE_BY_DATES",
+        "parameters": [
+          {
+            "name": "startDate",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "endDate",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WorkoutSchedule"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Workout Portal"],
+        "description": "This request is to create a workout schedule by/for a user:",
+        "operationId": "CREATE_WORKOUT_SCHEDULE",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkoutSchedule"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Step": {
+        "required": ["type"],
+        "type": "object",
+        "properties": {
+          "stepOrder": {
+            "type": "integer",
+            "format": "int32",
+            "example": 1
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "discriminator": {
+          "propertyName": "type"
+        }
+      },
+      "Workout": {
+        "type": "object",
+        "properties": {
+          "workoutId": {
+            "type": "integer",
+            "format": "int64",
+            "example": 2201
+          },
+          "ownerId": {
+            "type": "integer",
+            "format": "int64",
+            "example": 232
+          },
+          "workoutName": {
+            "type": "string",
+            "example": "Bike Workout"
+          },
+          "description": {
+            "type": "string"
+          },
+          "updatedDate": {
+            "pattern": "2022-08-10T09:47:59\\.031",
+            "type": "string",
+            "description": "iso 8601 timestamp without GMT offset or 'Z' indicator!",
+            "example": "2018-10-23T21:17:53.0"
+          },
+          "createdDate": {
+            "pattern": "2022-08-10T09:47:59\\.031",
+            "type": "string",
+            "description": "iso 8601 timestamp without GMT offset or 'Z' indicator!",
+            "example": "2018-10-23T21:17:53.0"
+          },
+          "updatedTimeStamp": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "createdTimeStamp": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sport": {
+            "type": "string",
+            "example": "CYCLING",
+            "enum": [
+              "RUNNING",
+              "CYCLING",
+              "LAP_SWIMMING",
+              "STRENGTH_TRAINING",
+              "CARDIO_TRAINING",
+              "YOGA",
+              "PILATES",
+              "GENERIC",
+              "HIIT",
+              "MULTI_SPORT"
+            ]
+          },
+          "estimatedDurationInSecs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "estimatedDistanceInMeters": {
+            "type": "number",
+            "format": "double"
+          },
+          "poolLength": {
+            "type": "number",
+            "format": "double"
+          },
+          "poolLengthUnit": {
+            "type": "string",
+            "enum": ["YARD", "METER"]
+          },
+          "workoutProvider": {
+            "type": "string"
+          },
+          "workoutSourceId": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/WorkoutRepeatStep"
+                },
+                {
+                  "$ref": "#/components/schemas/WorkoutStep"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "WorkoutRepeatStep": {
+        "type": "object",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Step"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "repeatType": {
+                "type": "string",
+                "enum": [
+                  "REPEAT_UNTIL_STEPS_CMPLT",
+                  "REPEAT_UNTIL_TIME",
+                  "REPEAT_UNTIL_DISTANCE",
+                  "REPEAT_UNTIL_CALORIES",
+                  "REPEAT_UNTIL_HR_LESS_THAN",
+                  "REPEAT_UNTIL_HR_GREATER_THAN",
+                  "REPEAT_UNTIL_POWER_LESS_THAN",
+                  "REPEAT_UNTIL_POWER_GREATER_THAN",
+                  "REPEAT_UNTIL_POWER_LAST_LAP_LESS_THAN",
+                  "REPEAT_UNTIL_MAX_POWER_LAST_LAP_LESS_THAN",
+                  "REPEAT_UNTIL_TRAINING_PEAKS_TSS"
+                ]
+              },
+              "repeatValue": {
+                "type": "number",
+                "format": "double"
+              },
+              "skipLastRestStep": {
+                "type": "boolean"
+              }
+            }
+          }
+        ]
+      },
+      "WorkoutStep": {
+        "type": "object",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Step"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "intensity": {
+                "type": "string",
+                "example": "WARMUP",
+                "enum": ["ACTIVE", "REST", "WARMUP", "COOLDOWN", "RECOVERY", "INTERVAL", "MAIN"]
+              },
+              "description": {
+                "type": "string"
+              },
+              "durationType": {
+                "type": "string",
+                "example": "CALORIES",
+                "enum": [
+                  "TIME",
+                  "DISTANCE",
+                  "HR_LESS_THAN",
+                  "HR_GREATER_THAN",
+                  "CALORIES",
+                  "OPEN",
+                  "POWER_LESS_THAN",
+                  "POWER_GREATER_THAN",
+                  "TRAINING_PEAKS_TSS",
+                  "REPETITION_TIME",
+                  "REPS",
+                  "TIME_AT_VALID_CDA",
+                  "FIXED_REST",
+                  "FIXED_REPETITION",
+                  "REPETITION_SWIM_CSS_OFFSET"
+                ]
+              },
+              "durationValue": {
+                "type": "number",
+                "format": "double",
+                "example": 2
+              },
+              "durationValueType": {
+                "type": "string",
+                "enum": ["PERCENT", "MILE", "KILOMETER", "METER", "YARD"]
+              },
+              "targetType": {
+                "type": "string",
+                "example": "OPEN",
+                "enum": [
+                  "SPEED",
+                  "HEART_RATE",
+                  "OPEN",
+                  "CADENCE",
+                  "POWER",
+                  "GRADE",
+                  "RESISTANCE",
+                  "POWER_3S",
+                  "POWER_10S",
+                  "POWER_30S",
+                  "POWER_LAP",
+                  "SWIM_STROKE",
+                  "SPEED_LAP",
+                  "HEART_RATE_LAP",
+                  "PACE",
+                  "PACE_ZONE",
+                  "SWIM_INSTRUCTION",
+                  "SWIM_CSS_OFFSET"
+                ]
+              },
+              "targetValue": {
+                "type": "number",
+                "format": "double"
+              },
+              "targetValueLow": {
+                "type": "number",
+                "format": "double"
+              },
+              "targetValueHigh": {
+                "type": "number",
+                "format": "double"
+              },
+              "targetValueType": {
+                "type": "string",
+                "enum": ["PERCENT", "MILE", "KILOMETER", "METER", "YARD"]
+              },
+              "secondaryTargetType": {
+                "type": "string",
+                "enum": [
+                  "SPEED",
+                  "HEART_RATE",
+                  "OPEN",
+                  "CADENCE",
+                  "POWER",
+                  "GRADE",
+                  "RESISTANCE",
+                  "POWER_3S",
+                  "POWER_10S",
+                  "POWER_30S",
+                  "POWER_LAP",
+                  "SWIM_STROKE",
+                  "SPEED_LAP",
+                  "HEART_RATE_LAP",
+                  "PACE",
+                  "PACE_ZONE",
+                  "SWIM_INSTRUCTION",
+                  "SWIM_CSS_OFFSET"
+                ]
+              },
+              "secondaryTargetValue": {
+                "type": "number",
+                "format": "double"
+              },
+              "secondaryTargetValueLow": {
+                "type": "number",
+                "format": "double"
+              },
+              "secondaryTargetValueHigh": {
+                "type": "number",
+                "format": "double"
+              },
+              "secondaryTargetValueType": {
+                "type": "string",
+                "enum": ["PERCENT", "MILE", "KILOMETER", "METER", "YARD"]
+              },
+              "strokeType": {
+                "type": "string",
+                "enum": [
+                  "BACKSTROKE",
+                  "BREASTSTROKE",
+                  "DRILL",
+                  "BUTTERFLY",
+                  "FREESTYLE",
+                  "MIXED",
+                  "IM",
+                  "IM_BY_ROUND",
+                  "REVERSE_IM_BY_ROUND",
+                  "CHOICE"
+                ]
+              },
+              "drillType": {
+                "type": "string",
+                "enum": ["KICK", "PULL", "DRILL"]
+              },
+              "equipmentType": {
+                "type": "string",
+                "enum": [
+                  "NONE",
+                  "SWIM_FINS",
+                  "SWIM_KICKBOARD",
+                  "SWIM_PADDLES",
+                  "SWIM_PULL_BUOY",
+                  "SWIM_SNORKEL"
+                ]
+              },
+              "exerciseCategory": {
+                "type": "string"
+              },
+              "exerciseName": {
+                "type": "string"
+              },
+              "weightValue": {
+                "type": "number",
+                "format": "double"
+              },
+              "weightDisplayUnit": {
+                "type": "string",
+                "enum": ["OTHER", "KILOGRAM", "POUND"]
+              }
+            }
+          }
+        ]
+      },
+      "Segment": {
+        "type": "object",
+        "properties": {
+          "segmentOrder": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "sport": {
+            "type": "string",
+            "enum": [
+              "RUNNING",
+              "CYCLING",
+              "LAP_SWIMMING",
+              "STRENGTH_TRAINING",
+              "CARDIO_TRAINING",
+              "YOGA",
+              "PILATES",
+              "GENERIC",
+              "HIIT",
+              "MULTI_SPORT"
+            ]
+          },
+          "estimatedDurationInSecs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "estimatedDistanceInMeters": {
+            "type": "number",
+            "format": "double"
+          },
+          "poolLength": {
+            "type": "number",
+            "format": "double"
+          },
+          "poolLengthUnit": {
+            "type": "string",
+            "enum": ["YARD", "METER"]
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/WorkoutRepeatStep"
+                },
+                {
+                  "$ref": "#/components/schemas/WorkoutStep"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "WorkoutV2": {
+        "type": "object",
+        "properties": {
+          "workoutId": {
+            "type": "integer",
+            "format": "int64",
+            "example": 2201
+          },
+          "ownerId": {
+            "type": "integer",
+            "format": "int64",
+            "example": 232
+          },
+          "workoutName": {
+            "type": "string",
+            "example": "Bike Workout"
+          },
+          "description": {
+            "type": "string"
+          },
+          "updatedDate": {
+            "pattern": "2022-08-10T09:47:59\\.031",
+            "type": "string",
+            "description": "iso 8601 timestamp without GMT offset or 'Z' indicator!",
+            "example": "2018-10-23T21:17:53.0"
+          },
+          "createdDate": {
+            "pattern": "2022-08-10T09:47:59\\.031",
+            "type": "string",
+            "description": "iso 8601 timestamp without GMT offset or 'Z' indicator!",
+            "example": "2018-10-23T21:17:53.0"
+          },
+          "updatedTimeStamp": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "createdTimeStamp": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sport": {
+            "type": "string",
+            "example": "CYCLING",
+            "enum": [
+              "RUNNING",
+              "CYCLING",
+              "LAP_SWIMMING",
+              "STRENGTH_TRAINING",
+              "CARDIO_TRAINING",
+              "YOGA",
+              "PILATES",
+              "GENERIC",
+              "HIIT",
+              "MULTI_SPORT"
+            ]
+          },
+          "estimatedDurationInSecs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "estimatedDistanceInMeters": {
+            "type": "number",
+            "format": "double"
+          },
+          "poolLength": {
+            "type": "number",
+            "format": "double"
+          },
+          "poolLengthUnit": {
+            "type": "string",
+            "enum": ["YARD", "METER"]
+          },
+          "workoutProvider": {
+            "type": "string"
+          },
+          "workoutSourceId": {
+            "type": "string"
+          },
+          "isSessionTransitionEnabled": {
+            "type": "boolean"
+          },
+          "segments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Segment"
+            }
+          }
+        }
+      },
+      "WorkoutSchedule": {
+        "type": "object",
+        "properties": {
+          "scheduleId": {
+            "type": "integer",
+            "format": "int64",
+            "example": 123
+          },
+          "workoutId": {
+            "type": "integer",
+            "format": "int64",
+            "example": 123
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "ServiceFailure": {
+        "type": "object",
+        "properties": {
+          "errorType": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "errorMessage": {
+            "type": "string"
+          },
+          "errorId": {
+            "type": "string"
+          }
+        }
+      },
+      "ConnectErrorBody": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

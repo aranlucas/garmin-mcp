@@ -28,6 +28,8 @@ The configuration makes three deliberate choices:
 - Objects preserve additional Garmin fields while validating documented fields. Optionality and nullability follow the published schema; absent health metrics are not filled with invented values.
 - Date-time validation accepts local timestamps and timezone offsets. Dates remain strings rather than being converted into JavaScript `Date` objects.
 
+The Training, User, and Wellness snapshots come from `https://apis.garmin.com/tools/apiDocs/{training-api-workouts,user-api,wellness-api}` and also generate a fetch SDK (`@hey-api/client-fetch` + `@hey-api/sdk`) into `src/garmin-api/{training,user,wellness}`. The Training spec's server URL ends in `/workout` although its paths are relative to `/training-api`, so the config overrides the base URL. These specs declare no required fields, so `TrainingClient` keeps its own response schemas, size limit, and empty-response handling, and takes the SDK result as a raw stream. The bundled client runtime is not written for `exactOptionalPropertyTypes`; its files carry `// @ts-nocheck` and are excluded from Oxlint.
+
 ## Boundaries retained after review
 
 `src/index.ts` retains canonical-origin checking, resource-bound OAuth validation, and per-request MCP construction. Its two documented assertions bridge the OAuth library’s injected environment and resource context; they do not assert types for untrusted JSON.
