@@ -6,12 +6,6 @@ Updated 2026-10-26. Proposed release order, not delivery dates or evidence of cu
 
 A Garmin user who wants a useful weekly training review and an easy way to put their chosen next workouts on the calendar.
 
-## Current baseline
-
-The connector already exposes pushed health/activity summaries, day/activity reads including decoded FIT data, and workout/calendar CRUD. Starter data begins when pushes arrive; automatic historical backfill is unavailable.
-
-Planning evidence: [README](README.md), [MCP surface](src/mcp.ts) and [training tools](src/training/mcp.ts) at `d4986b7d1059`. This focused product pass does not claim a complete new code audit or live-provider validation.
-
 ## Prioritized releases
 
 | Order | Feature                                     | User value and scope                                                                                                                           | Release acceptance                                                                                                                    |
@@ -33,6 +27,17 @@ Add one weekly-review resource/tool that composes existing reads and includes a 
 
 ## Dependencies and deliberate limits
 
-Authorization outages must preserve retained data before relying on historical reviews; check the current retention fix at integration time. Keep exercise choices user-reviewed, label provider data gaps and avoid diagnostic or guaranteed-performance claims. Historical backfill requires actual provider support.
+Preserve [retained data during authorization outages](docs/authorization-retention.md) before relying on historical reviews. Keep exercise choices user-reviewed, label provider data gaps and avoid diagnostic or guaranteed-performance claims. Historical backfill requires actual provider support.
 
-Engineering work belongs in the milestone only when it enables that acceptance criterion. Prefer existing native libraries and test runners. Update this roadmap when a user-visible increment ships, recording the outcome and remaining limits rather than checking off implementation activity alone.
+Update this roadmap when a user-visible increment ships, recording the outcome and remaining limits.
+
+## Candidate event follow-ons
+
+These remaining ideas from the October 24 event proposal are not commitments or a change to the release order above. [Available events](docs/mcp-events.md) already cover workout completion, sleep, body composition and Health Snapshot.
+
+- **Recovery summary:** bundle available sleep, HRV and resting-heart-rate data for a morning review. Define completeness and a bounded wait, expose missing inputs, and never label it Garmin Training Readiness.
+- **Activity updated:** notify meaningful corrections or newly available detail so an analysis can be revised. Suppress identical retries; consider a details-available filter before adding a separate event.
+- **Daily goal reached:** use an explicit user-selected target because this connector has no goals API. Emit at most once per local day and target revision; define how corrected totals affect a previous crossing.
+- **Workout due/missed:** require a scheduler, user time zone and grace period for delayed sync. Missing activity is not proof of a missed workout; expose uncertainty in schedule-to-activity matching.
+
+Defer personal-best and all-time-record events until history completeness is known. Starter pushes and the optional activity import do not establish complete lifetime history. If client replay is added, use a durable journal sequence: mutable summaries whose receipt timestamps change on retry are not a reliable cursor. Deletion and withdrawal must also remove journal copies and define replay gaps.
