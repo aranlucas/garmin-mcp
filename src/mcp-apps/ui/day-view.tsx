@@ -2,17 +2,8 @@
 import { useState } from "react";
 import { z } from "zod";
 import { activityData, ActivityPanel, activityTitle, type ActivityData } from "./activity-view";
-import { LineChart, Ring, SegmentedBar, Stat, type Point } from "./chart";
-import {
-  count,
-  hoursMinutes,
-  kilometers,
-  longDate,
-  shiftDate,
-  timeOfDay,
-  words,
-  type Measure,
-} from "./format";
+import { GoalRings, LineChart, SegmentedBar, Stat, type Badge, type Point } from "./chart";
+import { count, hoursMinutes, longDate, shiftDate, timeOfDay, words, type Measure } from "./format";
 import {
   callTool,
   readResult,
@@ -146,6 +137,25 @@ const labels = new Map([
   ["skinTemp", "Skin temperature"],
 ]);
 
+/** Garmin's stress ranges: 0–25 rest, 26–50 low, 51–75 medium, 76–100 high. */
+function stressBadge(level: number | null): Badge | undefined {
+  if (level === null) {
+    return undefined;
+  }
+
+  if (level <= 25) {
+    return { text: "Rest", tone: "good" };
+  }
+
+  if (level <= 50) {
+    return { text: "Low", tone: "good" };
+  }
+
+  return { text: level <= 75 ? "Medium" : "High", tone: "attention" };
+}
+
+const goodSleep = new Set(["EXCELLENT", "GOOD"]);
+
 function today(timeZone: string | undefined): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone,
@@ -187,29 +197,43 @@ function DayPanel({ data, onOpen }: PanelProps) {
 
   const day: Domain = [0, 86_400];
 
+  const stressLevel =
+    present(d?.averageStressLevel) && d.averageStressLevel >= 0 ? d.averageStressLevel : null;
+
+  const score = night?.overallSleepScore;
+
+  const heartRange = d
+    ? `${count(d.minHeartRateInBeatsPerMinute)}–${count(d.maxHeartRateInBeatsPerMinute)} bpm`
+    : undefined;
+
   return (
     <>
       {d ? (
-        <div className="rings">
-          <Ring
-            label="Steps"
-            value={d.steps}
-            goal={d.stepsGoal}
-            display={`${count(d.steps)} / ${count(d.stepsGoal)}`}
-          />
-          <Ring
-            label="Intensity minutes"
-            value={intensity}
-            goal={d.intensityDurationGoalInSeconds}
-            display={`${minutes(intensity)} / ${minutes(d.intensityDurationGoalInSeconds)}`}
-          />
-          <Ring
-            label="Floors"
-            value={d.floorsClimbed}
-            goal={d.floorsClimbedGoal}
-            display={`${count(d.floorsClimbed)} / ${count(d.floorsClimbedGoal)}`}
-          />
-        </div>
+        <GoalRings
+          goals={[
+            {
+              label: "Steps",
+              value: d.steps,
+              goal: d.stepsGoal,
+              display: `${count(d.steps)} / ${count(d.stepsGoal)}`,
+              color: "var(--series-1)",
+            },
+            {
+              label: "Intensity minutes",
+              value: intensity,
+              goal: d.intensityDurationGoalInSeconds,
+              display: `${minutes(intensity)} / ${minutes(d.intensityDurationGoalInSeconds)}`,
+              color: "var(--series-2)",
+            },
+            {
+              label: "Floors",
+              value: d.floorsClimbed,
+              goal: d.floorsClimbedGoal,
+              display: `${count(d.floorsClimbed)} / ${count(d.floorsClimbedGoal)}`,
+              color: "var(--series-3)",
+            },
+          ]}
+        />
       ) : (
         <p className="muted">
           No daily summary was received for this day. Missing data does not mean zero.
@@ -218,9 +242,22 @@ function DayPanel({ data, onOpen }: PanelProps) {
 
       <div className="grid">
         <Stat
-          label="Resting heart rate"
-          value={`${count(d?.restingHeartRateInBeatsPerMinute)} bpm`}
+          label="Resting HR"
+          value={count(d?.restingHeartRateInBeatsPerMinute)}
+          unit="bpm"
           note={`range ${count(d?.minHeartRateInBeatsPerMinute)}–${count(d?.maxHeartRateInBeatsPerMinute)}`}
+        />
+        <Stat
+          label="HRV last night"
+          value={count(variability?.lastNightAvg)}
+          unit="ms"
+          note={`5-min high ${count(variability?.lastNight5MinHigh)} ms`}
+        />
+        <Stat
+          label="Avg stress"
+          value={count(stressLevel)}
+          unit="/ 100"
+          badge={stressBadge(stressLevel)}
         />
         <Stat
           label="Body Battery"
@@ -228,34 +265,31 @@ function DayPanel({ data, onOpen }: PanelProps) {
           note="charged / drained"
         />
         <Stat
-          label="Avg stress"
-          value={count(
-            present(d?.averageStressLevel) && d.averageStressLevel >= 0
-              ? d.averageStressLevel
-              : null,
-          )}
-          note="0–100"
+          label="Distance"
+          value={present(d?.distanceInMeters) ? count(d.distanceInMeters / 1000, 1) : count(null)}
+          unit="km"
         />
-        <Stat
-          label="HRV last night"
-          value={`${count(variability?.lastNightAvg)} ms`}
-          note={`5-min high ${count(variability?.lastNight5MinHigh)} ms`}
-        />
-        <Stat label="Distance" value={kilometers(d?.distanceInMeters)} />
-        <Stat label="Active calories" value={count(d?.activeKilocalories)} />
+        <Stat label="Active calories" value={count(d?.activeKilocalories)} unit="kcal" />
       </div>
 
       <LineChart
         label="Heart rate (bpm)"
+        summary={heartRange}
         points={heartRate}
         formatX={timeOfDay}
         formatY={(v) => count(v)}
         xDomain={day}
         xSeconds
         color="var(--series-2)"
+        area
       />
       <LineChart
         label="Body Battery"
+        summary={
+          d
+            ? `+${count(d.bodyBatteryChargedValue)} / −${count(d.bodyBatteryDrainedValue)}`
+            : undefined
+        }
         points={bodyBattery}
         formatX={timeOfDay}
         formatY={(v) => count(v)}
@@ -265,12 +299,22 @@ function DayPanel({ data, onOpen }: PanelProps) {
       />
 
       {night && (
-        <section className="section">
-          <h2>
-            Sleep · {hoursMinutes(night.durationInSeconds)}
-            {present(night.overallSleepScore?.value) &&
-              ` · score ${count(night.overallSleepScore.value)}${night.overallSleepScore.qualifierKey ? ` (${words(night.overallSleepScore.qualifierKey)})` : ""}`}
-          </h2>
+        <section className="card section" aria-label="Sleep">
+          <div className="section-head">
+            <h2>Sleep</h2>
+            {present(score?.value) && (
+              <span
+                className={`badge ${score.qualifierKey && goodSleep.has(score.qualifierKey) ? "good" : "neutral"}`}
+              >
+                Score {count(score.value)}
+                {score.qualifierKey ? ` · ${words(score.qualifierKey)}` : ""}
+              </span>
+            )}
+          </div>
+          <div className="sleep-headline">
+            <span className="display">{hoursMinutes(night.durationInSeconds)}</span>
+            <span className="muted">asleep</span>
+          </div>
           <SegmentedBar
             label="Sleep stages"
             format={hoursMinutes}
@@ -278,12 +322,12 @@ function DayPanel({ data, onOpen }: PanelProps) {
               {
                 label: "Deep",
                 value: night.deepSleepDurationInSeconds ?? 0,
-                color: "var(--series-1)",
+                color: "var(--seq-5)",
               },
               {
                 label: "Light",
                 value: night.lightSleepDurationInSeconds ?? 0,
-                color: "var(--series-2)",
+                color: "var(--seq-2)",
               },
               { label: "REM", value: night.remSleepInSeconds ?? 0, color: "var(--series-3)" },
               {
@@ -297,15 +341,25 @@ function DayPanel({ data, onOpen }: PanelProps) {
       )}
 
       {activities.length > 0 && (
-        <section className="section">
+        <section className="card section">
           <h2>Activities</h2>
-          <div className="chips">
+          <ul className="rows">
             {activities.map((id) => (
-              <button key={id} type="button" className="button" onClick={() => onOpen(id)}>
-                Open activity {id} →
-              </button>
+              <li key={id}>
+                <button
+                  type="button"
+                  className="row-button"
+                  aria-label={`Open activity ${id} →`}
+                  onClick={() => onOpen(id)}
+                >
+                  <span>Activity {id}</span>
+                  <span className="chevron" aria-hidden="true">
+                    →
+                  </span>
+                </button>
+              </li>
             ))}
-          </div>
+          </ul>
         </section>
       )}
 

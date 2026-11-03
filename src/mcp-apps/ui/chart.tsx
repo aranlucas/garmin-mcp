@@ -1,11 +1,13 @@
 /** @jsxImportSource react */
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useId, useRef, useState, type PointerEvent } from "react";
 import { DASH, type Measure } from "./format";
 
 export type Point = { x: number; y: number };
 
 type LineChartProps = {
   label: string;
+  /** A short reading shown beside the title, such as the range or average. */
+  summary?: string | undefined;
   points: Point[];
   formatX: (x: number) => string;
   formatY: (y: number) => string;
@@ -101,6 +103,8 @@ export function LineChart(props: LineChartProps) {
   const { points, formatX, formatY, color = "var(--series-1)" } = props;
   const [hover, setHover] = useState<number | null>(null);
   const { ref, width: WIDTH } = useWidth(640);
+  // SVG url(#id) references need an id without React's punctuation.
+  const fill = `fill${useId().replaceAll(/[^\w-]/g, "")}`;
 
   if (points.length < 2) {
     return null;
@@ -144,8 +148,11 @@ export function LineChart(props: LineChartProps) {
   };
 
   return (
-    <figure className="chart">
-      <figcaption>{props.label}</figcaption>
+    <figure className="chart card">
+      <figcaption>
+        <span>{props.label}</span>
+        {props.summary && <span className="chart-summary">{props.summary}</span>}
+      </figcaption>
       <div className="chart-frame" ref={ref}>
         <svg
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
@@ -182,11 +189,18 @@ export function LineChart(props: LineChartProps) {
             y2={baseline}
           />
           {props.area && (
-            <path
-              d={`${line}L${sx(points.at(-1)?.x ?? x1)},${baseline}L${sx(points[0]?.x ?? x0)},${baseline}Z`}
-              fill={color}
-              opacity={0.1}
-            />
+            <>
+              <defs>
+                <linearGradient id={fill} x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0" stopColor={color} stopOpacity={0.28} />
+                  <stop offset="1" stopColor={color} stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <path
+                d={`${line}L${sx(points.at(-1)?.x ?? x1)},${baseline}L${sx(points[0]?.x ?? x0)},${baseline}Z`}
+                fill={`url(#${fill})`}
+              />
+            </>
           )}
           <path
             d={line}
@@ -222,49 +236,104 @@ export function LineChart(props: LineChartProps) {
   );
 }
 
-type RingProps = { label: string; value: Measure; goal: Measure; display: string };
+export type Goal = {
+  label: string;
+  value: Measure;
+  goal: Measure;
+  /** The reading as text, such as "8,432 / 10,000". */
+  display: string;
+  color: string;
+};
 
-/** Goal progress: series fill on a lighter step of the same hue; over-goal caps at a full ring. */
-export function Ring({ label, value, goal, display }: RingProps) {
-  const fraction = value !== undefined && value !== null && goal ? Math.min(1, value / goal) : 0;
-  const circumference = 2 * Math.PI * 34;
+function share(value: Measure, goal: Measure): number | null {
+  return value !== undefined && value !== null && goal ? value / goal : null;
+}
+
+type GoalRingsProps = { goals: Goal[] };
+
+const RING = { size: 132, stroke: 11, gap: 3 };
+
+/**
+ * Daily goals as concentric rings, one hue per goal, with the readings listed beside them.
+ * Over-goal caps at a full ring; the list keeps the true percentage.
+ */
+export function GoalRings({ goals }: GoalRingsProps) {
+  const center = RING.size / 2;
 
   return (
-    <div className="ring-tile">
-      <svg viewBox="0 0 84 84" aria-hidden="true">
-        <circle cx={42} cy={42} r={34} className="ring-track" />
-        {fraction > 0 && (
-          <circle
-            cx={42}
-            cy={42}
-            r={34}
-            className="ring-fill"
-            strokeDasharray={`${fraction * circumference} ${circumference}`}
-            transform="rotate(-90 42 42)"
-          />
-        )}
-        <text x={42} y={47} textAnchor="middle" className="ring-percent">
-          {goal && value !== undefined && value !== null
-            ? `${Math.round((value / goal) * 100)}%`
-            : DASH}
-        </text>
+    <section className="card goals" aria-label="Daily goals">
+      <svg viewBox={`0 0 ${RING.size} ${RING.size}`} aria-hidden="true">
+        {goals.map((g, i) => {
+          const r = center - RING.stroke / 2 - i * (RING.stroke + RING.gap);
+          const circumference = 2 * Math.PI * r;
+          const fraction = Math.min(1, share(g.value, g.goal) ?? 0);
+
+          return (
+            <g key={g.label} style={{ color: g.color }}>
+              <circle cx={center} cy={center} r={r} className="ring-track" />
+              {fraction > 0 && (
+                <circle
+                  cx={center}
+                  cy={center}
+                  r={r}
+                  className="ring-fill"
+                  strokeDasharray={`${fraction * circumference} ${circumference}`}
+                  transform={`rotate(-90 ${center} ${center})`}
+                />
+              )}
+            </g>
+          );
+        })}
       </svg>
-      <div>
-        <div className="label">{label}</div>
-        <div className="value">{display}</div>
-      </div>
-    </div>
+      <ul className="goal-list">
+        {goals.map((g) => {
+          const fraction = share(g.value, g.goal);
+
+          return (
+            <li key={g.label}>
+              <span className="dot" style={{ background: g.color }} />
+              <div className="goal-text">
+                <div className="label">{g.label}</div>
+                <div className="value">{g.display}</div>
+              </div>
+              <span className={fraction !== null && fraction >= 1 ? "badge good" : "badge"}>
+                {fraction === null ? DASH : `${Math.round(fraction * 100)}%`}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
-type StatProps = { label: string; value: string; note?: string | undefined };
+export type Tone = "good" | "neutral" | "attention";
 
-export function Stat({ label, value, note }: StatProps) {
+export type Badge = { text: string; tone?: Tone };
+
+type StatProps = {
+  label: string;
+  value: string;
+  /** Rendered smaller after the value, and hidden when the value is missing. */
+  unit?: string | undefined;
+  note?: string | undefined;
+  badge?: Badge | undefined;
+};
+
+export function Stat({ label, value, unit, note, badge }: StatProps) {
   return (
     <div className="stat">
       <div className="label">{label}</div>
-      <div className="value">{value}</div>
-      {note && <div className="note">{note}</div>}
+      <div className="value">
+        {value}
+        {unit && value !== DASH && <span className="unit"> {unit}</span>}
+      </div>
+      {(note !== undefined || badge !== undefined) && (
+        <div className="note">
+          {badge && <span className={`badge ${badge.tone ?? "neutral"}`}>{badge.text}</span>}
+          {note}
+        </div>
+      )}
     </div>
   );
 }
@@ -298,11 +367,14 @@ export function SegmentedBar({ label, parts, format }: SegmentedBarProps) {
             />
           ))}
       </div>
-      <ul className="legend">
+      <ul className="legend parts">
         {parts.map((part) => (
           <li key={part.label}>
             <span className="swatch" style={{ background: part.color }} />
-            {part.label} · {format(part.value)}
+            <span>
+              {part.label} · {format(part.value)}
+              <span className="note"> {Math.round((part.value / total) * 100)}%</span>
+            </span>
           </li>
         ))}
       </ul>
