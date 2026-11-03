@@ -31,9 +31,12 @@ jobs:
           require-lockfile: true
       - name: Check generated Garmin API client
         run: pnpm --filter garmin-api-codegen build && pnpm --filter garmin-api-codegen test && git diff --exit-code -- src/garmin-api
-      - name: Install Chromium for MCP Apps view tests
-        run: pnpm exec playwright install --with-deps chromium
       - name: Run checks and tests
         run: pnpm run check
+      # Cloudflare Workers Builds also runs `pnpm run check`, without a browser; view tests run here only.
+      - name: Install Chromium for MCP Apps view tests
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run MCP Apps view tests
+        run: pnpm run test:apps
       - name: Build
         run: pnpm run build
