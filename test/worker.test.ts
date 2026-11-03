@@ -392,6 +392,9 @@ it.each([
   { name: "missing Garmin scope", fields: { scope: "email" }, status: 401 },
   { name: "wrong issuer", fields: { iss: "https://other.example" }, status: 401 },
   { name: "expired subject lifetime", fields: { exp: 1 }, status: 401 },
+  // A sender-constrained token must not be replayable as a plain bearer token.
+  { name: "a DPoP key binding", fields: { cnf: { jkt: "fixture-thumbprint" } }, status: 401 },
+  { name: "a malformed scope claim", fields: { scope: "garmin:access  email" }, status: 401 },
 ])("checks Auth exchange-shaped tokens with $name", async ({ fields, status }) => {
   vi.stubGlobal(
     "fetch",

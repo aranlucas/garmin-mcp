@@ -1,12 +1,20 @@
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { oauthProviderResourceClient } from "@better-auth/oauth-provider/resource-client";
+import { createAuthClient } from "better-auth/client";
+import { env as workerEnv } from "cloudflare:workers";
 import { z } from "zod";
 
 export const GARMIN_SCOPE = "garmin:access";
 
-const keySets = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+/** Auth's Better Auth resource client: cached JWKS with key-rotation refetch and scope checks. */
+const authClient = createAuthClient({
+  baseURL: workerEnv.AUTH_ISSUER,
+  fetchOptions: { redirect: "manual", retry: 0 },
+  plugins: [oauthProviderResourceClient()],
+});
 
-const claims = z.object({ sub: z.string().min(1).max(255), scope: z.string() });
+const claims = z.object({ sub: z.string().min(1).max(255) });
 
+/** The Auth subject of a valid `garmin:access` bearer token for this resource, otherwise null. */
 export async function authenticate(request: Request, env: Env) {
   const authorization = request.headers.get("Authorization");
 
@@ -14,24 +22,19 @@ export async function authenticate(request: Request, env: Env) {
     return null;
   }
 
-  let keys = keySets.get(env.AUTH_ISSUER);
-
-  if (!keys) {
-    keys = createRemoteJWKSet(new URL(`${env.AUTH_ISSUER}/jwks`));
-    keySets.set(env.AUTH_ISSUER, keys);
-  }
-
   try {
-    const { payload } = await jwtVerify(authorization.slice(7), keys, {
-      issuer: env.AUTH_ISSUER,
-      audience: new URL("/mcp", env.PUBLIC_URL).href,
-      algorithms: ["RS256"],
-      requiredClaims: ["sub", "exp", "iat"],
+    const payload = await authClient.verifyBearerToken(authorization.slice(7), {
+      jwksUrl: `${env.AUTH_ISSUER}/jwks`,
+      verifyOptions: {
+        issuer: env.AUTH_ISSUER,
+        audience: new URL("/mcp", env.PUBLIC_URL).href,
+        algorithms: ["RS256"],
+        requiredClaims: ["sub", "exp", "iat"],
+      },
+      requiredScopes: [GARMIN_SCOPE],
     });
 
-    const identity = claims.parse(payload);
-
-    return identity.scope.split(/\s+/).includes(GARMIN_SCOPE) ? identity.sub : null;
+    return claims.parse(payload).sub;
   } catch {
     return null;
   }

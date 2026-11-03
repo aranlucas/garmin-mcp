@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { z } from "zod";
+import { liveAuthClient } from "./auth-client";
 
 const base = process.env.SMOKE_BASE_URL ?? "https://garmin-mcp.aranlucas.workers.dev";
 
@@ -27,26 +28,26 @@ it("advertises shared Auth and protects the single merged MCP endpoint", async (
     scopes_supported: ["garmin:access"],
   });
 
-  const metadata = metadataSchema.parse(
-    await (await fetch(`${issuer}/.well-known/oauth-authorization-server`)).json(),
-  );
+  const auth = liveAuthClient(issuer);
+  const discovery = await auth.$fetch("/.well-known/oauth-authorization-server", { method: "GET" });
+  const metadata = metadataSchema.parse(discovery.data);
 
   expect(metadata.scopes_supported).toContain("garmin:access");
+  expect(metadata.registration_endpoint).toBe(`${issuer}/oauth2/register`);
 
-  const registration = await fetch(metadata.registration_endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      client_name: "Garmin deployment smoke",
-      redirect_uris: ["http://localhost:9876/callback"],
-      token_endpoint_auth_method: "none",
-      grant_types: ["authorization_code", "refresh_token"],
-      response_types: ["code"],
-      scope: "garmin:access offline_access",
-    }),
+  const registration = await auth.oauth2.register({
+    client_name: "Garmin deployment smoke",
+    redirect_uris: ["http://localhost:9876/callback"],
+    token_endpoint_auth_method: "none",
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+    scope: "garmin:access offline_access",
   });
 
-  expect(registration.status).toBe(201);
+  expect(registration.error).toBeNull();
+  expect(z.object({ client_id: z.string().min(1) }).safeParse(registration.data).success).toBe(
+    true,
+  );
 });
 
 it("serves keyless setup, honest privacy, and app branding", async () => {
