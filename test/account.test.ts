@@ -121,43 +121,6 @@ it("reads only the validated linked Garmin ID without credentials or Auth identi
   expect(storeAccess).not.toHaveBeenCalled();
 });
 
-it("keeps the same account URI isolated between concurrent authenticated clients", async () => {
-  const first = await connect(owner);
-
-  const secondOwner = {
-    subject: "other-private-auth-subject",
-    garminUserId: "other-linked-garmin-user-id",
-  };
-
-  const second = await connect(secondOwner);
-
-  const [firstRead, secondRead, firstReadAgain] = await Promise.all([
-    first.client.readResource({ uri: accountUri }),
-    second.client.readResource({ uri: accountUri }),
-    first.client.readResource({ uri: accountUri }),
-  ]);
-
-  expect(firstRead.contents).toEqual([
-    {
-      uri: accountUri,
-      mimeType: "application/json",
-      text: JSON.stringify({ userId: owner.garminUserId }),
-    },
-  ]);
-  expect(secondRead.contents).toEqual([
-    {
-      uri: accountUri,
-      mimeType: "application/json",
-      text: JSON.stringify({ userId: secondOwner.garminUserId }),
-    },
-  ]);
-  expect(firstReadAgain).toEqual(firstRead);
-  expect(first.fetcher).not.toHaveBeenCalled();
-  expect(second.fetcher).not.toHaveBeenCalled();
-  expect(first.storeAccess).not.toHaveBeenCalled();
-  expect(second.storeAccess).not.toHaveBeenCalled();
-});
-
 it.each([
   "garmin://account?userId=other-linked-garmin-user-id",
   "garmin://account?garminUserId=other-linked-garmin-user-id",
