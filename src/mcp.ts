@@ -10,6 +10,8 @@ import { registerActivityTools, activityFit } from "./activity/mcp";
 import { garminActivityId } from "./activity/files";
 import { dayInput, getGarminDay } from "./day";
 import { storedJson, toolError, toolResult } from "./tool-result";
+import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
+import { appMeta, registerApps } from "./mcp-apps/resources";
 
 const result = (data: z.infer<ReturnType<typeof z.json>>) =>
   toolResult({
@@ -66,6 +68,7 @@ export function createServer(
     },
   );
 
+  registerApps(server);
   registerTrainingTools(server, accessToken, fetcher);
   const client = new TrainingClient(accessToken, fetcher);
 
@@ -92,9 +95,11 @@ export function createServer(
 
   registerActivityTools(server, activityAccess);
 
-  server.registerTool(
+  registerAppTool(
+    server,
     "get_garmin_day",
     {
+      _meta: appMeta("day"),
       description:
         "Gather one calendar day's stored Garmin data across all Health/Activity categories. Health sections include full received summaries; activity sections contain summaryId/activityId references for get_garmin_summary or get_garmin_activity, without samples or FIT downloads. Uses Garmin's calendarDate, otherwise the device-offset local start date. Each section reports available, not_received, or permission_denied, with receipt timestamps and hasMore/nextOffset. Continue a section with list_garmin_summaries using its type, this date for both startDate/endDate, and nextOffset. Missing data does not mean zero. No historical fetch, recovery score, or inferred measurements. Source: Garmin Connect.",
       inputSchema: dayInput,

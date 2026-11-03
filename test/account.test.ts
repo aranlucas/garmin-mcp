@@ -65,6 +65,16 @@ it("discovers one static JSON account resource without adding an account tool", 
       name: "garmin-account",
       mimeType: "application/json",
     }),
+    // MCP Apps views are static HTML; they carry no account data.
+    expect.objectContaining({ uri: "ui://garmin/day.html", mimeType: "text/html;profile=mcp-app" }),
+    expect.objectContaining({
+      uri: "ui://garmin/activity.html",
+      mimeType: "text/html;profile=mcp-app",
+    }),
+    expect.objectContaining({
+      uri: "ui://garmin/workout.html",
+      mimeType: "text/html;profile=mcp-app",
+    }),
   ]);
   expect(templates.resourceTemplates).toEqual([]);
   expect(tools.tools.map((tool) => tool.name).toSorted()).toEqual([

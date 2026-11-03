@@ -31,6 +31,8 @@ jobs:
           require-lockfile: true
       - name: Check generated Garmin API client
         run: pnpm --filter garmin-api-codegen build && pnpm --filter garmin-api-codegen test && git diff --exit-code -- src/garmin-api
+      - name: Install Chromium for MCP Apps view tests
+        run: pnpm exec playwright install --with-deps chromium
       - name: Run checks and tests
         run: pnpm run check
       - name: Build

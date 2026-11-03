@@ -1,4 +1,4 @@
-import { McpServer } from "@modelcontextprotocol/server";
+import { McpServer, type ServerContext } from "@modelcontextprotocol/server";
 import type { ZodType } from "zod";
 import { TrainingClient, TrainingError } from "./client";
 import {
@@ -18,6 +18,8 @@ import {
   type TrainingData,
 } from "./schemas";
 import { toolError, toolResult } from "../tool-result";
+import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
+import { appMeta } from "../mcp-apps/resources";
 
 export const TRAINING_INSTRUCTIONS =
   "Garmin business Training API. Ask the user to approve the workout details and calendar date before writing. Create a workout, retain the returned workoutId, then schedule that ID for a Garmin calendar date. Garmin Connect syncs workouts to compatible devices; success here does not confirm watch delivery. Do not automatically repeat a write after an error: it may already have succeeded. PACE and SPEED targets use meters per second (not minutes per kilometer); TIME uses seconds, DISTANCE uses meters, weights use kilograms. Workouts use v2 segments with globally increasing stepOrder values. If a write returns accepted:true without an ID, inspect Garmin Connect before any retry; do not invent an ID or repeat creation. Dates are Garmin calendar dates, not UTC timestamps. Garmin credentials must never appear in results.";
@@ -53,45 +55,50 @@ export function registerTrainingTools(
     inputSchema: ZodType<Input>,
     write: boolean,
     run: (input: Input, signal: AbortSignal) => Promise<TrainingData>,
+    view?: "workout",
   ): void {
-    server.registerTool(
-      name,
-      {
-        description,
-        inputSchema,
-        annotations: {
-          readOnlyHint: !write,
-          destructiveHint: name.startsWith("delete_") || name.startsWith("update_"),
-          idempotentHint: !write,
-          openWorldHint: true,
-        },
+    const config = {
+      description,
+      inputSchema,
+      annotations: {
+        readOnlyHint: !write,
+        destructiveHint: name.startsWith("delete_") || name.startsWith("update_"),
+        idempotentHint: !write,
+        openWorldHint: true,
       },
-      async (input, ctx) => {
-        try {
-          await client.requireWorkoutPermission(ctx.mcpReq.signal);
-          const data = await run(input, ctx.mcpReq.signal);
+    };
 
-          const result: TrainingResult = {
-            source: "Garmin Connect",
-            data,
-          };
+    const handler = async (input: Input, ctx: ServerContext) => {
+      try {
+        await client.requireWorkoutPermission(ctx.mcpReq.signal);
+        const data = await run(input, ctx.mcpReq.signal);
 
-          if (write && !name.startsWith("delete_")) {
-            result.deviceSync =
-              "Sync Garmin Connect with your compatible device to download the workout. Watch delivery has not been confirmed.";
-          }
+        const result: TrainingResult = {
+          source: "Garmin Connect",
+          data,
+        };
 
-          return toolResult(result);
-        } catch (error) {
-          const message =
-            error instanceof TrainingError
-              ? error.message
-              : "The Garmin Training request failed. Check Garmin Connect before retrying a write.";
-
-          return toolError(message);
+        if (write && !name.startsWith("delete_")) {
+          result.deviceSync =
+            "Sync Garmin Connect with your compatible device to download the workout. Watch delivery has not been confirmed.";
         }
-      },
-    );
+
+        return toolResult(result);
+      } catch (error) {
+        const message =
+          error instanceof TrainingError
+            ? error.message
+            : "The Garmin Training request failed. Check Garmin Connect before retrying a write.";
+
+        return toolError(message);
+      }
+    };
+
+    if (view) {
+      registerAppTool(server, name, { ...config, _meta: appMeta(view) }, handler);
+    } else {
+      server.registerTool(name, config, handler);
+    }
   }
 
   register(
@@ -100,6 +107,7 @@ export function registerTrainingTools(
     createWorkoutInput,
     true,
     ({ workout }, signal) => client.createWorkout(workoutWriteResponse, workout, signal),
+    "workout",
   );
   register(
     "get_workout",
@@ -107,6 +115,7 @@ export function registerTrainingTools(
     getWorkoutInput,
     false,
     ({ workoutId }, signal) => client.getWorkout(workoutResponse, workoutId, signal),
+    "workout",
   );
   register(
     "schedule_workout",
@@ -138,6 +147,7 @@ export function registerTrainingTools(
     true,
     ({ workoutId, ownerId, workout }, signal) =>
       client.updateWorkout(workoutWriteResponse, workoutId, ownerId, workout, signal),
+    "workout",
   );
   register(
     "delete_workout",

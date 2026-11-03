@@ -126,6 +126,9 @@ it("lists and reads the authenticated Garmin account without another upstream lo
     result: {
       resources: [
         { name: "garmin-account", uri: "garmin://account", mimeType: "application/json" },
+        { name: "garmin-day", uri: "ui://garmin/day.html" },
+        { name: "garmin-activity", uri: "ui://garmin/activity.html" },
+        { name: "garmin-workout", uri: "ui://garmin/workout.html" },
       ],
     },
   });
