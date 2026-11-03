@@ -75,4 +75,4 @@ export interface AuthBroker extends Fetcher {
   accessToken(userId: string): Promise<GarminCredential | null>;
 }
 
-export type AppBindings = { Bindings: Env; Variables: { formAction: string; parsedBody: unknown } };
+export type AppBindings = { Bindings: Env; Variables: { parsedBody: unknown } };

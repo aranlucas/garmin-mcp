@@ -17,6 +17,7 @@ import {
   schedulesResponse,
   type TrainingData,
 } from "./schemas";
+import { toolError, toolResult } from "../tool-result";
 
 export const TRAINING_INSTRUCTIONS =
   "Garmin business Training API. Ask the user to approve the workout details and calendar date before writing. Create a workout, retain the returned workoutId, then schedule that ID for a Garmin calendar date. Garmin Connect syncs workouts to compatible devices; success here does not confirm watch delivery. Do not automatically repeat a write after an error: it may already have succeeded. PACE and SPEED targets use meters per second (not minutes per kilometer); TIME uses seconds, DISTANCE uses meters, weights use kilograms. Workouts use v2 segments with globally increasing stepOrder values. If a write returns accepted:true without an ID, inspect Garmin Connect before any retry; do not invent an ID or repeat creation. Dates are Garmin calendar dates, not UTC timestamps. Garmin credentials must never appear in results.";
@@ -80,17 +81,14 @@ export function registerTrainingTools(
               "Sync Garmin Connect with your compatible device to download the workout. Watch delivery has not been confirmed.";
           }
 
-          return {
-            structuredContent: result,
-            content: [{ type: "text", text: JSON.stringify(result) }],
-          };
+          return toolResult(result);
         } catch (error) {
           const message =
             error instanceof TrainingError
               ? error.message
               : "The Garmin Training request failed. Check Garmin Connect before retrying a write.";
 
-          return { isError: true, content: [{ type: "text", text: message }] };
+          return toolError(message);
         }
       },
     );

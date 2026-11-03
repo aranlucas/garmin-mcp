@@ -9,20 +9,15 @@ import type { EventOwner } from "./events/protocol";
 import { registerActivityTools, activityFit } from "./activity/mcp";
 import { garminActivityId } from "./activity/files";
 import { dayInput, getGarminDay } from "./day";
+import { storedJson, toolError, toolResult } from "./tool-result";
 
-const result = (data: z.infer<ReturnType<typeof z.json>>) => {
-  const output = {
+const result = (data: z.infer<ReturnType<typeof z.json>>) =>
+  toolResult({
     source: "Garmin Connect",
     availability:
       "Stored Garmin summaries, including explicitly imported history; no automatic expiration. Starter has no automatic historical backfill.",
     data,
-  };
-
-  return {
-    structuredContent: output,
-    content: [{ type: "text" as const, text: JSON.stringify(output) }],
-  };
-};
+  });
 
 export function createServer(
   accessToken: string,
@@ -116,15 +111,9 @@ export function createServer(
 
         return result(await getGarminDay(store, input, permissions));
       } catch {
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text: "Garmin day data is unavailable. Check your connection and permissions in Auth and try again.",
-            },
-          ],
-        };
+        return toolError(
+          "Garmin day data is unavailable. Check your connection and permissions in Auth and try again.",
+        );
       }
     },
   );
@@ -158,19 +147,13 @@ export function createServer(
           ...rows,
           records: rows.records.map(({ receivedAt, summaryJSON }) => ({
             receivedAt,
-            summary: z.record(z.string(), z.json()).parse(JSON.parse(summaryJSON)),
+            summary: storedJson(summaryJSON),
           })),
         });
       } catch {
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text: "Garmin data is unavailable or permission was withdrawn. Reconnect Garmin in Auth and try again.",
-            },
-          ],
-        };
+        return toolError(
+          "Garmin data is unavailable or permission was withdrawn. Reconnect Garmin in Auth and try again.",
+        );
       }
     },
   );
@@ -191,29 +174,21 @@ export function createServer(
       try {
         await permitted(input.type, ctx.mcpReq.signal);
         const row = await store.get(input.type, input.summaryId);
-        const data = row ? z.record(z.string(), z.json()).parse(JSON.parse(row)) : null;
+        const data = row ? storedJson(row) : null;
         const id = garminActivityId.safeParse(data?.activityId);
 
         if (data && isActivityType(input.type) && id.success) {
           const fit = await activityFit(activityAccess, id.data, ctx.mcpReq.signal);
           const current = await store.get(input.type, input.summaryId);
 
-          return result(
-            current ? { ...z.record(z.string(), z.json()).parse(JSON.parse(current)), fit } : null,
-          );
+          return result(current ? { ...storedJson(current), fit } : null);
         }
 
         return result(data);
       } catch {
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text: "Garmin data is unavailable or permission was withdrawn. Reconnect Garmin in Auth and try again.",
-            },
-          ],
-        };
+        return toolError(
+          "Garmin data is unavailable or permission was withdrawn. Reconnect Garmin in Auth and try again.",
+        );
       }
     },
   );

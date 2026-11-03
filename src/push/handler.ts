@@ -126,13 +126,10 @@ export async function receivePush(
     ),
   );
   await Promise.all(
-    [...groups].map(async ([id, records]) => {
-      const store = userStore(env, id);
-
-      if (!revoke.has(id) && !(await store.isRevoked())) {
-        await store.ingest(records);
-      }
-    }),
+    // ingest() discards records for revoked accounts; skip only same-delivery deregistrations.
+    [...groups].flatMap(([id, records]) =>
+      revoke.has(id) ? [] : [userStore(env, id).ingest(records)],
+    ),
   );
   await Promise.all([...revoke].map((id) => userStore(env, id).revoke()));
   await Promise.all(
@@ -156,7 +153,7 @@ export async function purgeUser(request: Request, env: Env) {
 
   const parsed = z
     .object({ userId, action: z.enum(["disconnect", "activate"]).default("disconnect") })
-    .safeParse(await request.json());
+    .safeParse(await request.json().catch(() => null));
 
   if (!parsed.success) {
     return new Response(null, { status: 400 });

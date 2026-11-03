@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { GarminUserData } from "../push/store";
 import { fetchActivityFile, garminActivityId, type FitDetails } from "./files";
+import { storedJson, toolError, toolResult } from "../tool-result";
 
 type ActivityAccess = {
   store: DurableObjectStub<GarminUserData>;
@@ -15,7 +16,7 @@ export async function activityFit(access: ActivityAccess, activityId: string, si
   const file = await store.claimActivityFile(activityId);
 
   if (file.data) {
-    return z.record(z.string(), z.json()).parse(JSON.parse(file.data));
+    return storedJson(file.data);
   }
 
   if (!file.callback || !file.version || !file.summaryId) {
@@ -38,9 +39,7 @@ export async function activityFit(access: ActivityAccess, activityId: string, si
   await permitted(signal);
   const saved = await store.finishActivityFile(activityId, file.version, decoded);
 
-  return saved
-    ? z.record(z.string(), z.json()).parse(JSON.parse(saved))
-    : { availability: "unavailable", sets: [] };
+  return saved ? storedJson(saved) : { availability: "unavailable", sets: [] };
 }
 
 export function registerActivityTools(server: McpServer, access: ActivityAccess) {
@@ -71,31 +70,18 @@ export function registerActivityTools(server: McpServer, access: ActivityAccess)
           data: current
             ? {
                 activityId,
-                summary: current.summary
-                  ? z.record(z.string(), z.json()).parse(JSON.parse(current.summary))
-                  : null,
-                details: current.details
-                  ? z.record(z.string(), z.json()).parse(JSON.parse(current.details))
-                  : null,
+                summary: current.summary ? storedJson(current.summary) : null,
+                details: current.details ? storedJson(current.details) : null,
                 fit,
               }
             : null,
         };
 
-        return {
-          structuredContent: output,
-          content: [{ type: "text" as const, text: JSON.stringify(output) }],
-        };
+        return toolResult(output);
       } catch {
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text" as const,
-              text: "Garmin activity is unavailable or permission was withdrawn. Reconnect Garmin in Auth and try again.",
-            },
-          ],
-        };
+        return toolError(
+          "Garmin activity is unavailable or permission was withdrawn. Reconnect Garmin in Auth and try again.",
+        );
       }
     },
   );
