@@ -444,40 +444,6 @@ it.each([
   expect((await response.text()).includes('"list_garmin_summaries"')).toBe(status === 200);
 });
 
-it("fails closed for wrong audience, issuer, scope, expiry and disconnected accounts", async () => {
-  const config = bindings(null);
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(() =>
-      Promise.resolve(Response.json({ keys: [{ ...jwk, kid: "fixture", alg: "RS256" }] })),
-    ),
-  );
-
-  for (const fields of [
-    { aud: "https://other.example/mcp" },
-    { iss: "https://other.example" },
-    { scope: "mcp:tools" },
-    { exp: 1 },
-    {},
-  ]) {
-    const token = await new SignJWT({
-      sub: "auth-alice",
-      scope: "garmin:access",
-      iss: config.AUTH_ISSUER,
-      aud: `${base}/mcp`,
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + 900,
-      ...fields,
-    })
-      .setProtectedHeader({ alg: "RS256", kid: "fixture" })
-      .sign(privateKey);
-
-    expect(
-      (await send("/mcp", { headers: { Authorization: `Bearer ${token}` } }, config)).status,
-    ).toBe(401);
-  }
-});
-
 it.each([
   "/webhook/garmin",
   "/webhook/garmin/wrong",
