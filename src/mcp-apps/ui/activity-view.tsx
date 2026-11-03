@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { z } from "zod";
 import { LineChart, Stat, type Point } from "./chart";
 import { clock, count, DASH, kilometers, pace, words, type Measure } from "./format";
@@ -93,6 +93,8 @@ type Run = { bin: number; d: string };
 type SampleProps = { data: Sample[]; index: number | null };
 
 type ReplayProps = SampleProps & { onIndex: (i: number | null) => void };
+
+type RouteProps = SampleProps & { children?: ReactNode };
 
 type PanelProps = { data: ActivityData };
 
@@ -222,7 +224,7 @@ function project(data: Sample[]) {
   return { points, runs, heartRate: rates.length ? { low, high } : null };
 }
 
-function RouteMap({ data, index }: SampleProps) {
+function RouteMap({ data, index, children }: RouteProps) {
   const route = useMemo(() => project(data), [data]);
 
   if (!route) {
@@ -240,8 +242,10 @@ function RouteMap({ data, index }: SampleProps) {
         );
 
   return (
-    <figure className="chart">
-      <figcaption>Route, colored by heart rate</figcaption>
+    <figure className="chart card">
+      <figcaption>
+        <span>Route, colored by heart rate</span>
+      </figcaption>
       <div className="route">
         <svg
           viewBox={`0 0 ${ROUTE.width} ${ROUTE.height}`}
@@ -298,6 +302,7 @@ function RouteMap({ data, index }: SampleProps) {
           </li>
         )}
       </ul>
+      {children}
     </figure>
   );
 }
@@ -341,7 +346,7 @@ function Replay({ data, index, onIndex }: ReplayProps) {
   return (
     <div className="section">
       <div className="replay">
-        <button type="button" className="button" onClick={() => setPlaying(!playing)}>
+        <button type="button" className="button primary" onClick={() => setPlaying(!playing)}>
           {playing ? "Pause" : "▶ Replay"}
         </button>
         <input
@@ -358,10 +363,22 @@ function Replay({ data, index, onIndex }: ReplayProps) {
       </div>
       {sample && (
         <div className="readout" aria-live="off">
-          <span>⏱ {clock(sample.t)}</span>
-          <span>{kilometers(sample.distance)}</span>
-          <span>♥ {present(sample.hr) ? `${count(sample.hr)} bpm` : DASH}</span>
-          <span>{pace(sample.speed)}</span>
+          <div>
+            <span className="label">Elapsed</span>
+            {clock(sample.t)}
+          </div>
+          <div>
+            <span className="label">Distance</span>
+            {kilometers(sample.distance)}
+          </div>
+          <div>
+            <span className="label">Heart rate</span>
+            {present(sample.hr) ? `${count(sample.hr)} bpm` : DASH}
+          </div>
+          <div>
+            <span className="label">Pace</span>
+            {pace(sample.speed)}
+          </div>
         </div>
       )}
     </div>
@@ -382,6 +399,7 @@ export function ActivityPanel({ data }: PanelProps) {
   const elevation = series(records, (r) => r.altitude);
   const speeds = series(records, (r) => (present(r.speed) ? r.speed * 3.6 : null));
   const domain: Domain = [0, records.at(-1)?.t ?? 1];
+  const fastestLap = Math.max(1e-9, ...laps.map((l) => l.enhancedAvgSpeed ?? l.avgSpeed ?? 0));
 
   const chartProps = {
     formatX: clock,
@@ -391,43 +409,76 @@ export function ActivityPanel({ data }: PanelProps) {
     onActive: setIndex,
   };
 
+  const avgHeartRate = s?.averageHeartRateInBeatsPerMinute ?? session?.avgHeartRate;
+  const maxHeartRate = s?.maxHeartRateInBeatsPerMinute ?? session?.maxHeartRate;
+  const ascent = s?.totalElevationGainInMeters ?? session?.totalAscent;
+  const avgSpeed = present(speed) ? speed * 3.6 : null;
+
   return (
     <>
+      <section className="card headline" aria-label="Activity summary">
+        <div>
+          <span className="label">Distance</span>
+          <span className="value">
+            {present(distance) ? count(distance / 1000, 2) : DASH}
+            {present(distance) && <span className="unit"> km</span>}
+          </span>
+        </div>
+        <div>
+          <span className="label">Time</span>
+          <span className="value">{clock(duration)}</span>
+        </div>
+        <div>
+          <span className="label">Avg pace</span>
+          <span className="value">
+            {speed ? clock(1000 / speed) : DASH}
+            {speed ? <span className="unit"> /km</span> : null}
+          </span>
+        </div>
+      </section>
       <div className="grid">
-        <Stat label="Distance" value={kilometers(distance)} />
-        <Stat label="Time" value={clock(duration)} />
-        <Stat label="Avg pace" value={pace(speed)} />
         <Stat
           label="Avg heart rate"
-          value={count(s?.averageHeartRateInBeatsPerMinute ?? session?.avgHeartRate)}
-          note={`max ${count(s?.maxHeartRateInBeatsPerMinute ?? session?.maxHeartRate)} bpm`}
+          value={count(avgHeartRate)}
+          unit="bpm"
+          note={`max ${count(maxHeartRate)} bpm`}
         />
+        <Stat label="Elevation gain" value={count(ascent)} unit="m" />
         <Stat
-          label="Elevation gain"
-          value={`${count(s?.totalElevationGainInMeters ?? session?.totalAscent)} m`}
+          label="Calories"
+          value={count(s?.activeKilocalories ?? session?.totalCalories)}
+          unit="kcal"
         />
-        <Stat label="Calories" value={count(s?.activeKilocalories ?? session?.totalCalories)} />
       </div>
 
       {records.length > 1 && (
         <>
-          <RouteMap data={records} index={index} />
-          <Replay data={records} index={index} onIndex={setIndex} />
+          <RouteMap data={records} index={index}>
+            <Replay data={records} index={index} onIndex={setIndex} />
+          </RouteMap>
           <LineChart
             label="Heart rate (bpm)"
+            summary={
+              present(avgHeartRate)
+                ? `avg ${count(avgHeartRate)} · max ${count(maxHeartRate)}`
+                : undefined
+            }
             points={heartRate}
             formatY={(v) => count(v)}
             color="var(--series-2)"
+            area
             {...chartProps}
           />
           <LineChart
             label="Speed (km/h)"
+            summary={present(avgSpeed) ? `avg ${count(avgSpeed, 1)}` : undefined}
             points={speeds}
             formatY={(v) => count(v, 1)}
             {...chartProps}
           />
           <LineChart
             label="Elevation (m)"
+            summary={present(ascent) ? `+${count(ascent)} m` : undefined}
             points={elevation}
             formatY={(v) => count(v)}
             color="var(--series-3)"
@@ -446,7 +497,7 @@ export function ActivityPanel({ data }: PanelProps) {
       )}
 
       {laps.length > 1 && (
-        <section className="section">
+        <section className="card section">
           <h2>Laps</h2>
           <div className="table-wrap">
             <table>
@@ -457,6 +508,9 @@ export function ActivityPanel({ data }: PanelProps) {
                   <th className="num">Time</th>
                   <th className="num">Pace</th>
                   <th className="num">Avg HR</th>
+                  <th>
+                    <span className="visually-hidden">Relative speed</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -467,6 +521,14 @@ export function ActivityPanel({ data }: PanelProps) {
                     <td className="num">{clock(l.totalTimerTime)}</td>
                     <td className="num">{pace(l.enhancedAvgSpeed ?? l.avgSpeed)}</td>
                     <td className="num">{count(l.avgHeartRate)}</td>
+                    <td className="bar-cell" aria-hidden="true">
+                      <span
+                        className="bar"
+                        style={{
+                          width: `${Math.round(((l.enhancedAvgSpeed ?? l.avgSpeed ?? 0) / fastestLap) * 100)}%`,
+                        }}
+                      />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -476,7 +538,7 @@ export function ActivityPanel({ data }: PanelProps) {
       )}
 
       {sets.length > 0 && (
-        <section className="section">
+        <section className="card section">
           <h2>Strength sets</h2>
           <div className="table-wrap">
             <table>

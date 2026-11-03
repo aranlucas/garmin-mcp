@@ -1,7 +1,6 @@
 /** @jsxImportSource react */
 import { useState } from "react";
 import { z } from "zod";
-import { Stat } from "./chart";
 import { clock, count, DASH, hoursMinutes, kilometers, pace, words, type Measure } from "./format";
 import { readResult, Status, useHost, type ViewProps } from "./host";
 
@@ -234,7 +233,9 @@ function Profile({ data }: ProfileProps) {
 
   return (
     <figure className="chart profile">
-      <figcaption>Workout profile</figcaption>
+      <figcaption>
+        <span>Workout profile</span>
+      </figcaption>
       <div className="chart-frame">
         <svg
           viewBox={`0 0 ${PROFILE.width} ${PROFILE.height}`}
@@ -292,13 +293,13 @@ function Profile({ data }: ProfileProps) {
 
 function StepLine({ s }: StepProps) {
   return (
-    <li>
-      <span className="swatch" style={{ background: groups[effort(s).group].color }} />
-      <span>
-        <strong>{stepTitle(s)}</strong> · {durationLabel(s)} · {targetLabel(s)}
+    <li className="step" style={{ borderLeftColor: groups[effort(s).group].color }}>
+      <strong>{stepTitle(s)}</strong>
+      <span className="step-meta">
+        {durationLabel(s)} · {targetLabel(s)}
         {s.weightValue ? ` · ${count(s.weightValue, 1)} kg` : ""}
-        {s.description ? <span className="muted"> — {s.description}</span> : null}
       </span>
+      {s.description ? <span className="note">{s.description}</span> : null}
     </li>
   );
 }
@@ -338,8 +339,8 @@ function Schedule({ data }: ScheduleProps) {
   };
 
   return (
-    <div className="schedule">
-      <label className="muted" htmlFor="schedule-date">
+    <div className="card schedule">
+      <label className="label" htmlFor="schedule-date">
         Put it on the calendar
       </label>
       <input
@@ -348,7 +349,7 @@ function Schedule({ data }: ScheduleProps) {
         value={date}
         onChange={(event) => setDate(event.currentTarget.value)}
       />
-      <button type="button" className="button" onClick={ask} disabled={sent || !date}>
+      <button type="button" className="button primary" onClick={ask} disabled={sent || !date}>
         {sent ? "Asked" : "Ask to schedule"}
       </button>
     </div>
@@ -392,34 +393,40 @@ export function WorkoutView({ tool }: ViewProps) {
         </h1>
       </header>
       {data.description && <p className="muted">{data.description}</p>}
-      <div className="grid">
-        <Stat
-          label={estimated ? "Estimated time" : "Time"}
-          value={seconds ? hoursMinutes(seconds) : DASH}
-        />
-        <Stat label="Steps" value={count(plan.length)} note="repeats expanded" />
-        {meters > 0 && <Stat label="Distance in steps" value={kilometers(meters)} />}
-      </div>
-      {plan.length > 0 && <Profile data={plan} />}
+      <section className="card section" aria-label="Workout summary">
+        <div>
+          <span className="label">{estimated ? "Estimated time" : "Time"}</span>
+          <div className="display">{seconds ? hoursMinutes(seconds) : DASH}</div>
+        </div>
+        <div className="inline-stats">
+          <span>
+            <strong>{count(plan.length)}</strong> steps, repeats expanded
+          </span>
+          {meters > 0 && (
+            <span>
+              <strong>{kilometers(meters)}</strong> in distance steps
+            </span>
+          )}
+        </div>
+        {plan.length > 0 && <Profile data={plan} />}
+      </section>
       {data.segments.map((segment) => (
         <section className="section" key={segment.segmentOrder}>
-          {data.segments.length > 1 && <h2>{words(segment.sport)}</h2>}
+          <h2>{data.segments.length > 1 ? words(segment.sport) : "Steps"}</h2>
           <ol className="steps">
             {segment.steps.map((s) =>
               s.type === "WorkoutRepeatStep" ? (
-                <li key={s.stepOrder}>
-                  <span>
-                    <strong>Repeat ×{count(s.repeatValue)}</strong>
-                    <ol className="steps repeat">
-                      {(s.steps ?? []).flatMap((child) => {
-                        const parsed = step.safeParse(child);
+                <li key={s.stepOrder} className="repeat-group">
+                  <strong className="badge">Repeat ×{count(s.repeatValue)}</strong>
+                  <ol className="steps">
+                    {(s.steps ?? []).flatMap((child) => {
+                      const parsed = step.safeParse(child);
 
-                        return parsed.success
-                          ? [<StepLine key={parsed.data.stepOrder} s={parsed.data} />]
-                          : [];
-                      })}
-                    </ol>
-                  </span>
+                      return parsed.success
+                        ? [<StepLine key={parsed.data.stepOrder} s={parsed.data} />]
+                        : [];
+                    })}
+                  </ol>
                 </li>
               ) : (
                 <StepLine key={s.stepOrder} s={s} />
