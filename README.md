@@ -83,9 +83,19 @@ GARMIN_BACKFILL_SETTINGS_FILE=/private/path/backfill.json GARMIN_BACKFILL_COMMIT
 
 The first command only fetches and validates. The second imports through the production receiver. Both write a private activity-ID journal beside the settings file. Verify the imported records afterward with `list_garmin_summaries`. Keep both the Personal credential and push credential out of command arguments and logs.
 
+### Interactive views (MCP Apps)
+
+In hosts that support [MCP Apps](https://github.com/modelcontextprotocol/ext-apps), five tools also render an interactive view. Other hosts ignore the tool `_meta` and receive the same results.
+
+- `get_garmin_day`: goal rings, vitals, heart-rate and Body Battery charts, and sleep stages. Previous/next buttons and activity links call the read-only `get_garmin_day` and `get_garmin_activity` tools inside the view.
+- `get_garmin_activity`: the GPS route colored by heart rate, a replay scrubber linked to heart-rate, speed, and elevation charts, plus laps and strength sets.
+- `get_workout`, `create_workout`, `update_workout`: an intensity profile with expanded repeats and the step list. "Ask to schedule" sends a chat message; the model confirms and performs the write, never the view.
+
+One self-contained bundle (`src/mcp-apps/`, built by `pnpm build:apps` with `vite-plugin-singlefile`) is served as `ui://garmin/{day,activity,workout}.html` with no CDN, network, or frame access. Views follow the host theme and fonts and report navigation to the model only through `ui/update-model-context`. `pnpm inspector` opens the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) against the deployed `/mcp`; it completes Auth sign-in and renders these views.
+
 ## Architecture
 
-The connector verifies Auth's RS256 access JWTs with exact issuer, `/mcp` audience, expiry, and `garmin:access` scope, using `jose`. Auth stores encrypted Garmin credentials with Better Auth's native generic OAuth plugin. A private `GarminTokens` service binding returns a usable Garmin access token and immutable Garmin user ID. A per-user Durable Object in Auth serializes rotating Garmin refresh tokens and rechecks current linking/banned status before returning a credential.
+The connector verifies Auth's RS256 access JWTs with exact issuer, `/mcp` audience, expiry, and `garmin:access` scope through Better Auth's resource client (`verifyBearerToken`), which also caches the JWKS, refetches it on key rotation, and rejects DPoP-bound tokens presented as bearer tokens. Auth stores encrypted Garmin credentials with Better Auth's native generic OAuth plugin. A private `GarminTokens` service binding returns a usable Garmin access token and immutable Garmin user ID. A per-user Durable Object in Auth serializes rotating Garmin refresh tokens and rechecks current linking/banned status before returning a credential.
 
 Auth also supports [RFC 8693 token exchange](https://github.com/sidequest-labs/auth/blob/main/docs/oauth.md#token-exchange-between-auth-resources). An exchanged Auth access token works here when its audience is exactly `https://garmin-mcp.aranlucas.workers.dev/mcp` and its scope includes `garmin:access`. Exchange cannot add scopes absent from the subject token, so an identity-only Auth token cannot gain Garmin access. A service performing exchange needs an operator-provisioned confidential client, the permitted incoming and target resources, and consent. This connector only verifies the resulting token; it needs no exchange client or secret. Exchange does not return Garmin credentials or replace the private `GarminTokens` binding. Direct MCP clients continue using Auth's PKCE authorization and refresh flow.
 
@@ -115,7 +125,7 @@ pnpm deploy
 pnpm smoke
 ```
 
-`pnpm check` runs Worker type generation, TypeScript, Oxlint, formatting, and Worker tests. The Cloudflare Vitest project provides fake secrets and a local store; it never uses production data. `jose` is a direct dependency for maintained, typed JWT/JWKS verification; Better Auth owns authorization and consent in the shared Auth service. MCP transport/registration uses `@modelcontextprotocol/server`, and inputs/provider payloads use Zod.
+`pnpm check` runs Worker type generation, TypeScript, Oxlint, formatting, and Worker tests. `pnpm test:apps` renders the MCP Apps views in Playwright Chromium (run `pnpm exec playwright install chromium` once); GitHub CI runs both, while Cloudflare Workers Builds runs `pnpm check` without a browser. The Cloudflare Vitest project provides fake secrets and a local store; it never uses production data. Better Auth owns authorization and consent in the shared Auth service; this connector and its live tests use the Better Auth client (`better-auth`, `@better-auth/oauth-provider`) for token verification, discovery, registration, and token exchange instead of hand-written OAuth requests. `jose` remains for webhook-secret encryption. MCP transport/registration uses `@modelcontextprotocol/server`, and inputs/provider payloads use Zod.
 
 Workout and schedule mutations are tested with mocked Garmin responses in the Worker suite. Do not create workouts or calendar entries in a real Garmin account for testing. The former `training-live` lifecycle test was removed after deleted fixtures left broken cards in Garmin Connect's home-page summaries. Use the read-only `exchange-live` test below for live Training API verification.
 

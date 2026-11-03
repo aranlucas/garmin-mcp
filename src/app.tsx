@@ -28,7 +28,7 @@ app.use("*", async (c, next) => {
   await next();
 
   if (c.res.headers.get("Content-Type")?.startsWith("text/html")) {
-    for (const [name, value] of htmlHeaders(c.get("formAction"))) {
+    for (const [name, value] of htmlHeaders()) {
       c.header(name, value);
     }
   }

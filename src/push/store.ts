@@ -63,11 +63,7 @@ export class GarminUserData extends DurableObject<Env> {
     this.events = new GarminEvents(
       ctx,
       env,
-      (name) =>
-        this.isRevoked() ||
-        this.ctx.storage.sql
-          .exec<ValueRow>("SELECT value FROM settings WHERE key=?", eventPermission(name))
-          .toArray()[0]?.value === 0,
+      (name) => this.isRevoked() || this.setting(eventPermission(name)) === 0,
       () => this.nextActivityWork(),
     );
   }
@@ -83,11 +79,7 @@ export class GarminUserData extends DurableObject<Env> {
       for (const row of records) {
         const permission = isActivityType(row.type) ? "ACTIVITY_EXPORT" : "HEALTH_EXPORT";
 
-        if (
-          this.ctx.storage.sql
-            .exec("SELECT value FROM settings WHERE key=?", permission)
-            .toArray()[0]?.value === 0
-        ) {
+        if (this.setting(permission) === 0) {
           continue;
         }
 
@@ -192,12 +184,7 @@ export class GarminUserData extends DurableObject<Env> {
       : null;
   }
   private activityBlocked() {
-    return (
-      this.isRevoked() ||
-      this.ctx.storage.sql
-        .exec<ValueRow>("SELECT value FROM settings WHERE key='ACTIVITY_EXPORT'")
-        .toArray()[0]?.value === 0
-    );
+    return this.isRevoked() || this.setting("ACTIVITY_EXPORT") === 0;
   }
   private activityOwner() {
     return this.ctx.storage.sql
@@ -211,10 +198,7 @@ export class GarminUserData extends DurableObject<Env> {
       return expires;
     }
 
-    const attempt =
-      this.ctx.storage.sql
-        .exec<ValueRow>("SELECT value FROM settings WHERE key='fileNextAttempt'")
-        .toArray()[0]?.value ?? Date.now() + 2000;
+    const attempt = this.setting("fileNextAttempt") ?? Date.now() + 2000;
 
     return Math.min(expires ?? attempt, attempt);
   }
@@ -241,19 +225,11 @@ export class GarminUserData extends DurableObject<Env> {
       return;
     }
 
-    const nextAttempt =
-      this.ctx.storage.sql
-        .exec<ValueRow>("SELECT value FROM settings WHERE key='fileNextAttempt'")
-        .toArray()[0]?.value ?? 0;
-
-    if (nextAttempt > Date.now()) {
+    if ((this.setting("fileNextAttempt") ?? 0) > Date.now()) {
       return;
     }
 
-    this.ctx.storage.sql.exec(
-      "INSERT OR REPLACE INTO settings VALUES ('fileNextAttempt',?)",
-      Date.now() + 60_000,
-    );
+    this.setSetting("fileNextAttempt", Date.now() + 60_000);
 
     return { owner, activityId };
   }
@@ -333,10 +309,7 @@ export class GarminUserData extends DurableObject<Env> {
     this.finishActivityFile(activityId, file.version, current ? decoded : null);
 
     if (current) {
-      this.ctx.storage.sql.exec(
-        "INSERT OR REPLACE INTO settings VALUES ('fileNextAttempt',?)",
-        Date.now() + 2000,
-      );
+      this.setSetting("fileNextAttempt", Date.now() + 2000);
     }
   }
 
@@ -405,7 +378,7 @@ export class GarminUserData extends DurableObject<Env> {
   }
   revoke() {
     // Keep a tombstone: late delivery retries cannot restore withdrawn health data.
-    this.ctx.storage.sql.exec("INSERT OR REPLACE INTO settings VALUES ('revoked',1)");
+    this.setSetting("revoked", 1);
     this.ctx.storage.sql.exec("DELETE FROM activity_owner");
 
     return this.clear();
@@ -414,28 +387,16 @@ export class GarminUserData extends DurableObject<Env> {
     this.ctx.storage.sql.exec("DELETE FROM settings");
   }
   permissions(permissions: string[], changedAt: number) {
-    const previous =
-      this.ctx.storage.sql
-        .exec<ValueRow>("SELECT value FROM settings WHERE key='permissionTime'")
-        .toArray()[0]?.value ?? -1;
-
-    if (changedAt <= previous) {
+    if (changedAt <= (this.setting("permissionTime") ?? -1)) {
       return;
     }
 
     this.ctx.storage.transactionSync(() => {
-      this.ctx.storage.sql.exec(
-        "INSERT OR REPLACE INTO settings VALUES ('permissionTime',?)",
-        changedAt,
-      );
+      this.setSetting("permissionTime", changedAt);
 
       for (const permission of ["HEALTH_EXPORT", "ACTIVITY_EXPORT"]) {
         const allowed = permissions.includes(permission);
-        this.ctx.storage.sql.exec(
-          "INSERT OR REPLACE INTO settings VALUES (?,?)",
-          permission,
-          allowed ? 1 : 0,
-        );
+        this.setSetting(permission, allowed ? 1 : 0);
 
         if (!allowed) {
           if (permission === "ACTIVITY_EXPORT") {
@@ -458,10 +419,15 @@ export class GarminUserData extends DurableObject<Env> {
     return this.events.schedule();
   }
   isRevoked() {
-    return (
-      this.ctx.storage.sql.exec("SELECT value FROM settings WHERE key='revoked'").toArray().length >
-      0
-    );
+    return this.setting("revoked") !== undefined;
+  }
+  private setting(key: string): number | undefined {
+    return this.ctx.storage.sql
+      .exec<ValueRow>("SELECT value FROM settings WHERE key=?", key)
+      .toArray()[0]?.value;
+  }
+  private setSetting(key: string, value: number) {
+    this.ctx.storage.sql.exec("INSERT OR REPLACE INTO settings VALUES (?,?)", key, value);
   }
   subscribeEvent(owner: EventOwner, params: SubscribeParams) {
     return eventReply(() => this.events.subscribe(owner, params));

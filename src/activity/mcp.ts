@@ -2,6 +2,9 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { GarminUserData } from "../push/store";
 import { fetchActivityFile, garminActivityId, type FitDetails } from "./files";
+import { storedJson, toolError, toolResult } from "../tool-result";
+import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
+import { appMeta } from "../mcp-apps/resources";
 
 type ActivityAccess = {
   store: DurableObjectStub<GarminUserData>;
@@ -15,7 +18,7 @@ export async function activityFit(access: ActivityAccess, activityId: string, si
   const file = await store.claimActivityFile(activityId);
 
   if (file.data) {
-    return z.record(z.string(), z.json()).parse(JSON.parse(file.data));
+    return storedJson(file.data);
   }
 
   if (!file.callback || !file.version || !file.summaryId) {
@@ -38,15 +41,15 @@ export async function activityFit(access: ActivityAccess, activityId: string, si
   await permitted(signal);
   const saved = await store.finishActivityFile(activityId, file.version, decoded);
 
-  return saved
-    ? z.record(z.string(), z.json()).parse(JSON.parse(saved))
-    : { availability: "unavailable", sets: [] };
+  return saved ? storedJson(saved) : { availability: "unavailable", sets: [] };
 }
 
 export function registerActivityTools(server: McpServer, access: ActivityAccess) {
-  server.registerTool(
+  registerAppTool(
+    server,
     "get_garmin_activity",
     {
+      _meta: appMeta("activity"),
       description:
         "Get a stored Garmin activity by activityId from list_garmin_summaries, including its summary, JSON details, and all SDK-decoded FIT message types and fields. Includes samples, GPS, sessions, laps, events, device metadata, developer fields, and strength sets when recorded. Uses cached FIT data or downloads a pending received file. Garmin file links expire after 24 hours. Missing data means unavailable, not no activity. Does not fetch historical activities. Source: Garmin Connect.",
       inputSchema: z.strictObject({ activityId: garminActivityId }),
@@ -71,31 +74,18 @@ export function registerActivityTools(server: McpServer, access: ActivityAccess)
           data: current
             ? {
                 activityId,
-                summary: current.summary
-                  ? z.record(z.string(), z.json()).parse(JSON.parse(current.summary))
-                  : null,
-                details: current.details
-                  ? z.record(z.string(), z.json()).parse(JSON.parse(current.details))
-                  : null,
+                summary: current.summary ? storedJson(current.summary) : null,
+                details: current.details ? storedJson(current.details) : null,
                 fit,
               }
             : null,
         };
 
-        return {
-          structuredContent: output,
-          content: [{ type: "text" as const, text: JSON.stringify(output) }],
-        };
+        return toolResult(output);
       } catch {
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text" as const,
-              text: "Garmin activity is unavailable or permission was withdrawn. Reconnect Garmin in Auth and try again.",
-            },
-          ],
-        };
+        return toolError(
+          "Garmin activity is unavailable or permission was withdrawn. Reconnect Garmin in Auth and try again.",
+        );
       }
     },
   );

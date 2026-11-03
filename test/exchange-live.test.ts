@@ -1,9 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { encodeBasicCredentials } from "better-auth/oauth2";
 import { expect, it } from "vitest";
 import { z } from "zod";
 import { schedulesResponse } from "../src/training/schemas";
+import { liveAuthClient } from "./auth-client";
 import { required } from "./support";
 
 // Opt-in only: prepare a dedicated confidential client and consented subject token in Auth.
@@ -34,11 +35,10 @@ it("exchanges a live Auth token and reads Garmin's workout calendar through MCP"
   const session = sessionSchema.parse(JSON.parse(await readFile(path, "utf8")));
   const resource = `${session.base}/mcp`;
 
-  const discovery = await fetch(`${session.issuer}/.well-known/oauth-authorization-server`, {
-    redirect: "error",
-  });
+  const auth = liveAuthClient(session.issuer);
+  const discovery = await auth.$fetch("/.well-known/oauth-authorization-server", { method: "GET" });
 
-  expect(discovery.status).toBe(200);
+  expect(discovery.error).toBeNull();
 
   const metadata = z
     .object({
@@ -47,28 +47,31 @@ it("exchanges a live Auth token and reads Garmin's workout calendar through MCP"
       jwks_uri: z.literal(`${session.issuer}/jwks`),
       grant_types_supported: z.array(z.string()),
     })
-    .parse(await discovery.json());
+    .parse(discovery.data);
 
   expect(metadata.grant_types_supported).toContain(exchangeGrant);
 
-  const keys = createRemoteJWKSet(new URL(metadata.jwks_uri));
+  const verify = (token: string) =>
+    auth.verifyBearerToken(token, {
+      jwksUrl: metadata.jwks_uri,
+      verifyOptions: {
+        issuer: session.issuer,
+        audience: resource,
+        algorithms: ["RS256"],
+        typ: "at+jwt",
+        requiredClaims: ["sub", "exp", "iat"],
+      },
+      requiredScopes: ["garmin:access"],
+    });
 
-  const verification = {
-    issuer: session.issuer,
-    audience: resource,
-    algorithms: ["RS256"],
-    typ: "at+jwt",
-    requiredClaims: ["sub", "exp", "iat"],
-  };
+  const subject = await verify(session.subjectToken);
 
-  const subject = await jwtVerify(session.subjectToken, keys, verification);
-
-  const response = await fetch(metadata.token_endpoint, {
+  // The token endpoint requires form encoding; better-fetch sends URLSearchParams unchanged.
+  const exchange = await auth.$fetch("/oauth2/token", {
     method: "POST",
-    redirect: "error",
     headers: {
+      Authorization: encodeBasicCredentials(session.clientId, session.clientSecret),
       "Content-Type": "application/x-www-form-urlencoded",
-      Authorization: `Basic ${Buffer.from(`${encodeURIComponent(session.clientId)}:${encodeURIComponent(session.clientSecret)}`).toString("base64")}`,
     },
     body: new URLSearchParams({
       grant_type: exchangeGrant,
@@ -79,16 +82,16 @@ it("exchanges a live Auth token and reads Garmin's workout calendar through MCP"
     }),
   });
 
-  expect(response.status).toBe(200);
-  const tokens = exchangedTokens.parse(await response.json());
-  const exchanged = await jwtVerify(tokens.access_token, keys, verification);
-  expect(exchanged.payload.sub).toBe(subject.payload.sub);
-  expect([exchanged.payload.aud].flat()).toEqual([resource]);
-  expect(exchanged.payload.scope).toBe("garmin:access");
-  expect(exchanged.payload.client_id).toBe(session.clientId);
-  expect(exchanged.payload.sid).toBe(subject.payload.sid);
-  expect(exchanged.payload.reference_id).toBe(subject.payload.reference_id);
-  expect(exchanged.payload.exp).toBeLessThanOrEqual(subject.payload.exp ?? 0);
+  expect(exchange.error).toBeNull();
+  const tokens = exchangedTokens.parse(exchange.data);
+  const exchanged = await verify(tokens.access_token);
+  expect(exchanged.sub).toBe(subject.sub);
+  expect([exchanged.aud].flat()).toEqual([resource]);
+  expect(exchanged.scope).toBe("garmin:access");
+  expect(exchanged.client_id).toBe(session.clientId);
+  expect(exchanged.sid).toBe(subject.sid);
+  expect(exchanged.reference_id).toBe(subject.reference_id);
+  expect(exchanged.exp).toBeLessThanOrEqual(subject.exp ?? 0);
 
   const client = new Client({ name: "garmin-exchange-e2e", version: "1.0.0" });
 

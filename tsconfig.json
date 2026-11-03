@@ -24,6 +24,7 @@
     "test/**/*.ts",
     "cloudflare.config.ts",
     "vite.config.ts",
+    "vite.apps.config.ts",
     "vitest.config.ts",
     "oxfmt.config.ts",
     "codegen/*.ts",

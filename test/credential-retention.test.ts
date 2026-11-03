@@ -347,6 +347,25 @@ it("authenticated explicit disconnect still purges all data and blocks late deli
   expect(await f.store.claimActivityFile("123")).toMatchObject({ state: "permission_denied" });
 });
 
+it("rejects a malformed authenticated disconnect body without purging", async () => {
+  const f = await fixture();
+
+  const response = await purgeUser(
+    new Request("https://worker.example/garmin/disconnect", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.GARMIN_PUSH_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: "{not json",
+    }),
+    env,
+  );
+
+  expect(response.status).toBe(400);
+  expect(await f.store.isRevoked()).toBe(false);
+});
+
 it.each([401, 403, 412])(
   "post-claim HTTP %s expires the consumed claim without purging or downloading twice",
   async (status) => {

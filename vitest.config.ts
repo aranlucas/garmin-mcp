@@ -7,7 +7,7 @@ export default defineConfig({
       {
         plugins: [
           cloudflareTest({
-            experimental: { newConfig: true },
+            config: true,
             miniflare: {
               bindings: {
                 GARMIN_PUSH_TOKEN: "test-only-delivery-credential-with-at-least-32-characters",
@@ -49,11 +49,21 @@ export default defineConfig({
           name: "worker",
           include: ["test/**/*.test.ts"],
           exclude: [
+            "test/mcp-apps.browser.test.ts",
             "test/smoke.test.ts",
             "test/push-live.test.ts",
             "test/exchange-live.test.ts",
             "test/personal-backfill-live.test.ts",
           ],
+        },
+      },
+      // MCP Apps views rendered by the SDK host bridge in a sandboxed Chromium iframe.
+      {
+        test: {
+          name: "apps",
+          include: ["test/mcp-apps.browser.test.ts"],
+          environment: "node",
+          testTimeout: 30_000,
         },
       },
       {

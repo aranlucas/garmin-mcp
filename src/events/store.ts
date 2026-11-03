@@ -570,7 +570,10 @@ export class GarminEvents {
       )
       .toArray();
 
-    await Promise.all(jobs.map((job) => this.deliver(job)));
+    // Concurrent jobs share one Auth/Garmin check per owner and permission in this pass;
+    // deliver() still rechecks local withdrawal state before every POST.
+    const checks = new Map<string, Promise<Access>>();
+    await Promise.all(jobs.map((job) => this.deliver(job, checks)));
     this.cleanup();
     await this.schedule();
   }
@@ -629,7 +632,7 @@ export class GarminEvents {
     }
   }
 
-  private async deliver(job: DeliveryRow) {
+  private async deliver(job: DeliveryRow, checks: Map<string, Promise<Access>>) {
     const subscription = this.subscription(job.subscription_id);
 
     if (!subscription || subscription.expires_at <= Date.now()) {
@@ -638,10 +641,21 @@ export class GarminEvents {
       return;
     }
 
-    const access = await this.access(
-      { subject: subscription.owner, garminUserId: subscription.garmin_id },
-      subscription.name,
-    );
+    const key = JSON.stringify([
+      subscription.owner,
+      subscription.garmin_id,
+      eventPermission(subscription.name),
+    ]);
+
+    const pending =
+      checks.get(key) ??
+      this.access(
+        { subject: subscription.owner, garminUserId: subscription.garmin_id },
+        subscription.name,
+      );
+
+    checks.set(key, pending);
+    const access = await pending;
 
     if (access === "denied") {
       this.finish(job, "access_revoked");
