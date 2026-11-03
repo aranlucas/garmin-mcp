@@ -26,27 +26,27 @@
     "@garmin/fitsdk": "21.218.0",
     "@modelcontextprotocol/hono": "2.0.2",
     "@modelcontextprotocol/server": "2.4.0",
-    "hono": "4.13.14",
-    "jose": "^6.2.13",
+    "hono": "4.13.16",
+    "jose": "^6.2.15",
     "standardwebhooks": "^1.1.1",
     "zod": "4.6.7"
   },
   "devDependencies": {
     "@aranlucas/oxforge": "0.3.0",
     "@cloudflare/vite-plugin": "2.0.0-beta.v.4",
-    "@cloudflare/vitest-plugin": "1.4.7",
+    "@cloudflare/vitest-plugin": "1.5.0",
     "@modelcontextprotocol/client": "2.4.0",
-    "@types/node": "26.6.5",
-    "cf": "1.0.0-beta.21",
+    "@types/node": "26.6.6",
+    "cf": "1.0.0-beta.27",
     "husky": "^9.1.7",
     "lint-staged": "^17.6.0",
-    "oxfmt": "0.74.0",
-    "oxlint": "1.89.0",
+    "oxfmt": "0.75.0",
+    "oxlint": "1.90.0",
     "oxlint-tsgolint": "7.0.2005",
-    "portless": "0.15.12",
+    "portless": "0.15.13",
     "typescript": "7.1.0-dev.20261026.1",
     "vite": "8.3.5",
-    "vitest": "5.0.5"
+    "vitest": "5.1.0"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}": [
@@ -57,5 +57,5 @@
       "oxfmt --no-error-on-unmatched-pattern"
     ]
   },
-  "packageManager": "pnpm@12.15.0"
+  "packageManager": "pnpm@12.16.1"
 }
