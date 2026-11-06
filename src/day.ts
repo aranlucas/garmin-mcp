@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { calendarDate } from "./tool-input";
-import { summaryType, isActivityType } from "./push/schemas";
+import { summaryType, isActivityType, summaryPermission } from "./push/schemas";
 import type { GarminUserData } from "./push/store";
 import { garminActivityId } from "./activity/files";
 
@@ -44,7 +44,7 @@ export async function getGarminDay(
   const sections = await Promise.all(
     summaryType.options.map(async (type) => {
       const activity = isActivityType(type);
-      const permission = activity ? "ACTIVITY_EXPORT" : "HEALTH_EXPORT";
+      const permission = summaryPermission(type);
 
       if (revoked || !permissions.includes(permission)) {
         return [

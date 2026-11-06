@@ -36,6 +36,20 @@ export function isActivityType(type: string) {
 
 export type SummaryType = z.infer<typeof summaryType>;
 
+export function summaryPermission(type: SummaryType) {
+  return isActivityType(type) ? "ACTIVITY_EXPORT" : "HEALTH_EXPORT";
+}
+
+export interface StoredSummary {
+  type: SummaryType;
+  summaryId: string;
+  date: string;
+  receivedAt: number;
+  data: string;
+  startTime?: number;
+  duration?: number;
+}
+
 export const userId = z.string().min(1).max(255);
 
 const timing = z.object({

@@ -1,4 +1,4 @@
-import { McpServer, type ServerContext } from "@modelcontextprotocol/server";
+import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import type { ZodType } from "zod";
 import { TrainingClient, TrainingError } from "./client";
 import {
@@ -25,22 +25,6 @@ export const TRAINING_INSTRUCTIONS =
   "Garmin business Training API. Ask the user to approve the workout details and calendar date before writing. Create a workout, retain the returned workoutId, then schedule that ID for a Garmin calendar date. Garmin Connect syncs workouts to compatible devices; success here does not confirm watch delivery. Do not automatically repeat a write after an error: it may already have succeeded. PACE and SPEED targets use meters per second (not minutes per kilometer); TIME uses seconds, DISTANCE uses meters, weights use kilograms. Workouts use v2 segments with globally increasing stepOrder values. If a write returns accepted:true without an ID, inspect Garmin Connect before any retry; do not invent an ID or repeat creation. Dates are Garmin calendar dates, not UTC timestamps. Garmin credentials must never appear in results.";
 
 type TrainingResult = { source: string; data: TrainingData; deviceSync?: string };
-
-export function createTrainingServer(
-  accessToken: string,
-  fetcher: typeof fetch = fetch,
-): McpServer {
-  const server = new McpServer(
-    { name: "garmin-training", version: "1.0.0" },
-    {
-      instructions: TRAINING_INSTRUCTIONS,
-    },
-  );
-
-  registerTrainingTools(server, accessToken, fetcher);
-
-  return server;
-}
 
 export function registerTrainingTools(
   server: McpServer,

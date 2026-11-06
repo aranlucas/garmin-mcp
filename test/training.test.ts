@@ -1,3 +1,4 @@
+import { McpServer } from "@modelcontextprotocol/server";
 import {
   Client,
   InMemoryTransport,
@@ -15,7 +16,7 @@ import {
 } from "vitest";
 import * as z from "zod";
 import { TrainingClient, TrainingError } from "../src/training/client";
-import { createTrainingServer } from "../src/training/mcp";
+import { registerTrainingTools, TRAINING_INSTRUCTIONS } from "../src/training/mcp";
 import {
   createWorkoutInput,
   listSchedulesInput,
@@ -99,7 +100,12 @@ function responses(...values: Response[]) {
 }
 
 async function connect(fetcher: typeof fetch): Promise<Client> {
-  const server = createTrainingServer(accessToken, fetcher);
+  const server = new McpServer(
+    { name: "training-test", version: "1.0.0" },
+    { instructions: TRAINING_INSTRUCTIONS },
+  );
+  registerTrainingTools(server, accessToken, fetcher);
+
   const client = new Client({ name: "training-protocol-test", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -162,15 +168,27 @@ describe("Training MCP protocol", () => {
       toolCalls.map((tool) => tool.name).toSorted(),
     );
 
-    for (const tool of list.tools) {
-      const write = !["get_workout", "get_workout_schedule", "list_workout_schedules"].includes(
-        tool.name,
-      );
+    const expected = {
+      create_workout: [false, false],
+      get_workout: [true, false],
+      schedule_workout: [false, false],
+      get_workout_schedule: [true, false],
+      list_workout_schedules: [true, false],
+      update_workout: [false, true],
+      delete_workout: [false, true],
+      update_workout_schedule: [false, true],
+      delete_workout_schedule: [false, true],
+    };
 
+    for (const [name, [readOnly, destructive]] of Object.entries(expected)) {
+      const tool = required(
+        list.tools.find((item) => item.name === name),
+        name,
+      );
       expect(tool.annotations, tool.name).toEqual({
-        readOnlyHint: !write,
-        destructiveHint: tool.name.startsWith("delete_") || tool.name.startsWith("update_"),
-        idempotentHint: !write,
+        readOnlyHint: readOnly,
+        destructiveHint: destructive,
+        idempotentHint: readOnly,
         openWorldHint: true,
       });
       expect(tool.inputSchema.additionalProperties, tool.name).toBe(false);

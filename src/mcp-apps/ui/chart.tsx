@@ -78,7 +78,6 @@ function useWidth(fallback: number) {
   return { ref, width };
 }
 
-/** The point nearest an x value; points are sorted by x. */
 function nearest(points: Point[], x: number): number {
   let low = 0;
   let high = points.length - 1;
@@ -98,7 +97,6 @@ function nearest(points: Point[], x: number): number {
   return before && x - before.x < (points[low]?.x ?? x) - x ? low - 1 : low;
 }
 
-/** One series, one axis: 2px line, hairline grid, crosshair + tooltip on hover. */
 export function LineChart(props: LineChartProps) {
   const { points, formatX, formatY, color = "var(--series-1)" } = props;
   const [hover, setHover] = useState<number | null>(null);
@@ -340,7 +338,6 @@ export function Stat({ label, value, unit, note, badge }: StatProps) {
 
 export type Part = { label: string; value: number; color: string };
 
-/** One whole split into parts: 2px surface gaps, legend always present, values in the legend. */
 type SegmentedBarProps = { label: string; parts: Part[]; format: (v: number) => string };
 
 export function SegmentedBar({ label, parts, format }: SegmentedBarProps) {

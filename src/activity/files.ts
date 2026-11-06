@@ -56,7 +56,7 @@ export type FitDetails = ReturnType<typeof decodeActivityFile> & {
   fileSummaryId: string;
 };
 
-export async function fetchActivityFile(
+async function fetchActivityFile(
   url: string,
   accessToken: string,
   signal: AbortSignal,
@@ -82,4 +82,24 @@ export async function fetchActivityFile(
     provenance:
       "All SDK-decoded FIT activity messages and fields, associated by Garmin's activityFiles activityId.",
   };
+}
+
+export async function decodeClaimedActivityFile(
+  url: string,
+  accessToken: string,
+  signal: AbortSignal,
+  fetcher: typeof fetch,
+  activityId: string,
+  fileSummaryId: string,
+): Promise<FitDetails | null> {
+  try {
+    return {
+      ...(await fetchActivityFile(url, accessToken, signal, fetcher)),
+      activityId,
+      fileSummaryId,
+    };
+  } catch {
+    // A one-use download may have been consumed. Never retry or expose callback/parser details.
+    return null;
+  }
 }

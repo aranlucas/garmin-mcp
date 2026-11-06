@@ -5,7 +5,28 @@ import { createServer } from "../src/mcp";
 import { userStore } from "../src/push/store";
 import { requestUrl } from "./support";
 import { receivePush } from "../src/push/handler";
-import { summaryType, isActivityType } from "../src/push/schemas";
+import { summaryType } from "../src/push/schemas";
+
+const categories = {
+  health: [
+    "dailies",
+    "epochs",
+    "sleeps",
+    "bodyComps",
+    "stressDetails",
+    "userMetrics",
+    "pulseox",
+    "allDayRespiration",
+    "healthSnapshot",
+    "hrv",
+    "bloodPressures",
+    "skinTemp",
+    "nutrition",
+    "hydration",
+    "breathingVariations",
+  ],
+  activity: ["activities", "activityDetails", "manuallyUpdatedActivities", "moveIQActivities"],
+};
 
 async function connect(garminId: string, permissions: string[]) {
   const fetcher = vi.fn<typeof fetch>().mockImplementation((input) => {
@@ -85,7 +106,11 @@ it("gathers every day category with health measurements and lightweight activity
 
   expect(day.isError).not.toBe(true);
 
-  for (const type of summaryType.options) {
+  expect(summaryType.options.toSorted()).toEqual(
+    [...categories.health, ...categories.activity].toSorted(),
+  );
+
+  for (const type of [...categories.health, ...categories.activity]) {
     const reference = { summaryId: `${type}-1` };
 
     expect(day.structuredContent).toMatchObject({
@@ -96,7 +121,7 @@ it("gathers every day category with health measurements and lightweight activity
           [type]: {
             availability: "available",
             records: [
-              isActivityType(type)
+              categories.activity.includes(type)
                 ? { ...reference, activityId: "123" }
                 : {
                     ...reference,

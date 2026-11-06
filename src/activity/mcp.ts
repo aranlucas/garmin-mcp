@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { GarminUserData } from "../push/store";
-import { fetchActivityFile, garminActivityId, type FitDetails } from "./files";
+import { decodeClaimedActivityFile, garminActivityId } from "./files";
 import { storedJson, toolError, toolResult } from "../tool-result";
 import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
 import { appMeta } from "../mcp-apps/resources";
@@ -25,18 +25,14 @@ export async function activityFit(access: ActivityAccess, activityId: string, si
     return { availability: file.state, sets: [] };
   }
 
-  let decoded: FitDetails | null = null;
-
-  try {
-    decoded = {
-      ...(await fetchActivityFile(file.callback, accessToken, signal, fetcher)),
-      activityId,
-      fileSummaryId: file.summaryId,
-    };
-  } catch {
-    // Never expose callback credentials, parser diagnostics, or partial FIT messages. A one-use
-    // download may have been consumed, so an ambiguous failure is not retried.
-  }
+  const decoded = await decodeClaimedActivityFile(
+    file.callback,
+    accessToken,
+    signal,
+    fetcher,
+    activityId,
+    file.summaryId,
+  );
 
   await permitted(signal);
   const saved = await store.finishActivityFile(activityId, file.version, decoded);
