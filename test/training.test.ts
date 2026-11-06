@@ -104,6 +104,7 @@ async function connect(fetcher: typeof fetch): Promise<Client> {
     { name: "training-test", version: "1.0.0" },
     { instructions: TRAINING_INSTRUCTIONS },
   );
+
   registerTrainingTools(server, accessToken, fetcher);
 
   const client = new Client({ name: "training-protocol-test", version: "1.0.0" });
@@ -185,6 +186,7 @@ describe("Training MCP protocol", () => {
         list.tools.find((item) => item.name === name),
         name,
       );
+
       expect(tool.annotations, tool.name).toEqual({
         readOnlyHint: readOnly,
         destructiveHint: destructive,
