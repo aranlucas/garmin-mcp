@@ -4,7 +4,7 @@ import { z } from "zod";
 import { classifyGarminCredential, type AuthBroker } from "../auth";
 import { TrainingClient } from "../training/client";
 import { logEvent, type DeliveryOutcome, type IngestDiagnostic } from "./diagnostics";
-import type { StoredSummary } from "../push/store";
+import type { StoredSummary } from "../push/schemas";
 import {
   activityFilters,
   activityMetrics,
@@ -85,7 +85,7 @@ export class GarminEvents {
     private readonly ctx: DurableObjectState,
     private readonly env: Env,
     private readonly blocked: (name: EventName) => boolean,
-    private readonly nextFileExpiry: () => number | null = () => null,
+    private readonly schedule: () => Promise<void>,
   ) {
     this.sql = ctx.storage.sql;
     this.sql.exec(
@@ -541,26 +541,15 @@ export class GarminEvents {
     );
   }
 
-  async schedule() {
-    const nextEvent = this.sql
+  nextAlarm() {
+    return this.sql
       .exec<NextRow>(
         "SELECT min(at) AS next FROM (SELECT min(next_at) AS at FROM event_deliveries UNION ALL SELECT min(deadline) FROM event_deliveries UNION ALL SELECT min(expires_at) FROM event_subscriptions UNION ALL SELECT min(expires_at) FROM event_verifications UNION ALL SELECT min(previous_until) FROM event_subscriptions WHERE previous_secret IS NOT NULL)",
       )
       .one().next;
-
-    const candidates = [nextEvent, this.nextFileExpiry()].filter((time) => time !== null);
-    const next = candidates.length ? Math.min(...candidates) : null;
-
-    if (next === null) {
-      await this.ctx.storage.deleteAlarm();
-    } else {
-      await this.ctx.storage.setAlarm(Math.max(Date.now() + 1000, next));
-    }
   }
 
   async alarm() {
-    // Set a recovery alarm before external I/O; an unexpected crash cannot strand the outbox.
-    await this.ctx.storage.setAlarm(Date.now() + MINUTE);
     this.cleanup();
 
     const jobs = this.sql
@@ -575,7 +564,6 @@ export class GarminEvents {
     const checks = new Map<string, Promise<Access>>();
     await Promise.all(jobs.map((job) => this.deliver(job, checks)));
     this.cleanup();
-    await this.schedule();
   }
 
   private finish(job: DeliveryRow, outcome: DeliveryOutcome) {

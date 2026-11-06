@@ -5,32 +5,20 @@ import { garminFaqUrl } from "./links";
 
 type DocumentProps = PropsWithChildren<{
   title: string;
-  styles: string;
   description?: string;
-  themeColor?: string;
-  serviceName?: string;
 }>;
 
-function Document({
-  title,
-  styles,
-  description,
-  themeColor,
-  serviceName = "Garmin MCP",
-  children,
-}: DocumentProps) {
+function Document({ title, description, children }: DocumentProps) {
   return (
     <html lang="en">
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
         {description && <meta name="description" content={description} />}
-        {themeColor && <meta name="theme-color" content={themeColor} />}
-        <title>
-          {title} · {serviceName}
-        </title>
+        <meta name="theme-color" content="#faf9f6" />
+        <title>{title} · Garmin MCP</title>
         {/* Only trusted, build-time CSS bypasses escaping. Page content always uses JSX. */}
-        <style dangerouslySetInnerHTML={{ __html: styles }} />
+        <style dangerouslySetInnerHTML={{ __html: siteStyles }} />
       </head>
       <body>{children}</body>
     </html>
@@ -61,9 +49,7 @@ export function SiteLayout({ kind, children }: SiteLayoutProps) {
   return (
     <Document
       title={isPrivacy ? "Privacy and access" : "Your training. A better conversation."}
-      styles={siteStyles}
       description={description}
-      themeColor="#faf9f6"
     >
       <a class="skip-link" href="#main">
         Skip to content

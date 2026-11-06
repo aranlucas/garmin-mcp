@@ -8,7 +8,6 @@ export async function readBounded(response: Response, maxBytes: number): Promise
   const chunks: Uint8Array[] = [];
   let total = 0;
 
-  // Leaving the loop early cancels the stream.
   for await (const chunk of response.body) {
     if (!(chunk instanceof Uint8Array)) {
       throw new GarminError("Garmin returned an unreadable response.", 502);

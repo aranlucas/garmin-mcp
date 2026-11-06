@@ -13,8 +13,6 @@ export const TRAINING_BASE = "https://apis.garmin.com";
 
 export { TrainingError };
 
-type UserIdentity = { userId: string };
-
 /** Generated-SDK options shared by every call: raw body, so responses stay bounded and validated. */
 type CallOptions = { client: Client; parseAs: "stream"; throwOnError: true };
 
@@ -158,15 +156,6 @@ export class TrainingClient {
     }
 
     return validatedJson(schema, response, 1024 * 1024, signal, write);
-  }
-
-  getUserId(signal?: AbortSignal): Promise<UserIdentity> {
-    return this.request(
-      z.object({ userId: z.string().min(1) }),
-      signal,
-      (options) => user.userId(options),
-      userApi,
-    );
   }
 
   getPermissions(signal?: AbortSignal): Promise<string[]> {

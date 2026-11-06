@@ -120,7 +120,6 @@ const HEART_RATE_BINS = [
   "var(--seq-5)",
 ];
 
-/** Evenly thinned FIT records, with elapsed seconds from the first timestamp. */
 function samples(records: z.infer<typeof fitRecord>[]): Sample[] {
   const timed = records.filter((r) => present(r.timestamp));
   const stride = Math.max(1, Math.ceil(timed.length / MAX_SAMPLES));
@@ -153,7 +152,6 @@ function series(data: Sample[], pick: (s: Sample) => Measure): Point[] {
 
 type Projected = { x: number; y: number; bin: number; index: number };
 
-/** Equirectangular projection fitted to the frame; north up, aspect preserved. */
 function project(data: Sample[]) {
   const located = data.flatMap((s, index) =>
     !present(s.lat) || !present(s.lon) || (s.lat === 0 && s.lon === 0)
@@ -200,7 +198,6 @@ function project(data: Sample[]) {
     index: p.index,
   }));
 
-  // Contiguous runs of one heart-rate bin become one path; adjacent runs share an endpoint.
   const runs: Run[] = [];
 
   for (const [i, p] of points.entries()) {

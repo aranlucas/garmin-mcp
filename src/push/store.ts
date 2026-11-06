@@ -1,10 +1,10 @@
 import { DurableObject } from "cloudflare:workers";
-import { isActivityType, type SummaryType } from "./schemas";
+import { summaryPermission, type SummaryType, type StoredSummary } from "./schemas";
 import { GarminEvents } from "../events/store";
 import { logEvent, type IngestDiagnostic } from "../events/diagnostics";
 import { ActivityFiles } from "../activity/store";
 import type { ActivityFileNotification, FitDetails } from "../activity/files";
-import { fetchActivityFile } from "../activity/files";
+import { decodeClaimedActivityFile } from "../activity/files";
 import { classifyGarminCredential, type AuthBroker, type GarminCredential } from "../auth";
 import { TrainingClient } from "../training/client";
 import {
@@ -26,16 +26,6 @@ type TypeRow = { type: SummaryType };
 type ActivitySummaryRow = DataRow & { type: string };
 
 type ActivityOwner = { subject: string; garmin_id: string };
-
-export interface StoredSummary {
-  type: SummaryType;
-  summaryId: string;
-  date: string;
-  receivedAt: number;
-  data: string;
-  startTime?: number;
-  duration?: number;
-}
 
 /** One SQLite object per immutable Garmin account ID, never per client-supplied tool input. */
 export class GarminUserData extends DurableObject<Env> {
@@ -64,7 +54,7 @@ export class GarminUserData extends DurableObject<Env> {
       ctx,
       env,
       (name) => this.isRevoked() || this.setting(eventPermission(name)) === 0,
-      () => this.nextActivityWork(),
+      () => this.schedule(),
     );
   }
   async ingest(records: StoredSummary[]) {
@@ -77,7 +67,7 @@ export class GarminUserData extends DurableObject<Env> {
     const diagnostics: IngestDiagnostic[] = [];
     this.ctx.storage.transactionSync(() => {
       for (const row of records) {
-        const permission = isActivityType(row.type) ? "ACTIVITY_EXPORT" : "HEALTH_EXPORT";
+        const permission = summaryPermission(row.type);
 
         if (this.setting(permission) === 0) {
           continue;
@@ -139,7 +129,7 @@ export class GarminUserData extends DurableObject<Env> {
       logEvent(diagnostic);
     }
 
-    await this.events.schedule();
+    await this.schedule();
   }
   list(type: SummaryType, startDate: string, endDate: string, limit: number, offset: number) {
     const rows = this.ctx.storage.sql
@@ -191,6 +181,17 @@ export class GarminUserData extends DurableObject<Env> {
       .exec<ActivityOwner>("SELECT subject,garmin_id FROM activity_owner WHERE id=1")
       .toArray()[0];
   }
+  private async schedule() {
+    const candidates = [this.events.nextAlarm(), this.nextActivityWork()].filter(
+      (time) => time !== null,
+    );
+
+    if (!candidates.length) {
+      await this.ctx.storage.deleteAlarm();
+    } else {
+      await this.ctx.storage.setAlarm(Math.max(Date.now() + 1000, Math.min(...candidates)));
+    }
+  }
   private nextActivityWork() {
     const expires = this.files.nextExpiry();
 
@@ -215,7 +216,7 @@ export class GarminUserData extends DurableObject<Env> {
       subject,
       garminUserId,
     );
-    await this.events.schedule();
+    await this.schedule();
   }
   private pendingActivityDownload() {
     const owner = this.activityOwner();
@@ -263,24 +264,6 @@ export class GarminUserData extends DurableObject<Env> {
     return false;
   }
 
-  private async decodeActivityDownload(
-    activityId: string,
-    callback: string,
-    summaryId: string,
-    accessToken: string,
-  ): Promise<FitDetails | null> {
-    try {
-      return {
-        ...(await fetchActivityFile(callback, accessToken, AbortSignal.timeout(20_000), fetch)),
-        activityId,
-        fileSummaryId: summaryId,
-      };
-    } catch {
-      // One-use downloads cannot be retried after an ambiguous failure. Never log credentials.
-      return null;
-    }
-  }
-
   private async downloadClaimedFile(
     owner: ActivityOwner,
     activityId: string,
@@ -293,11 +276,13 @@ export class GarminUserData extends DurableObject<Env> {
       return;
     }
 
-    const decoded = await this.decodeActivityDownload(
-      activityId,
+    const decoded = await decodeClaimedActivityFile(
       file.callback,
-      file.summaryId,
       credential.accessToken,
+      AbortSignal.timeout(20_000),
+      fetch,
+      activityId,
+      file.summaryId,
     );
 
     if (!(await this.activityPermission(client))) {
@@ -350,7 +335,7 @@ export class GarminUserData extends DurableObject<Env> {
       });
     }
 
-    await this.events.schedule();
+    await this.schedule();
   }
   async claimActivityFile(activityId: string) {
     if (this.activityBlocked()) {
@@ -358,7 +343,7 @@ export class GarminUserData extends DurableObject<Env> {
     }
 
     const claimed = this.files.claim(activityId);
-    await this.events.schedule();
+    await this.schedule();
 
     return claimed;
   }
@@ -374,7 +359,7 @@ export class GarminUserData extends DurableObject<Env> {
       this.events.clear();
     });
 
-    return this.events.schedule();
+    return this.schedule();
   }
   revoke() {
     // Keep a tombstone: late delivery retries cannot restore withdrawn health data.
@@ -408,7 +393,7 @@ export class GarminUserData extends DurableObject<Env> {
           for (const row of this.ctx.storage.sql
             .exec<TypeRow>("SELECT DISTINCT type FROM summaries")
             .toArray()) {
-            if (isActivityType(row.type) === (permission === "ACTIVITY_EXPORT")) {
+            if (summaryPermission(row.type) === permission) {
               this.ctx.storage.sql.exec("DELETE FROM summaries WHERE type=?", row.type);
             }
           }
@@ -416,7 +401,7 @@ export class GarminUserData extends DurableObject<Env> {
       }
     });
 
-    return this.events.schedule();
+    return this.schedule();
   }
   isRevoked() {
     return this.setting("revoked") !== undefined;
@@ -436,10 +421,12 @@ export class GarminUserData extends DurableObject<Env> {
     return eventReply(() => this.events.unsubscribe(owner, params));
   }
   override async alarm() {
+    // A crash during external I/O must not strand either domain’s durable work.
     await this.ctx.storage.setAlarm(Date.now() + 60_000);
     this.files.expire();
     await this.downloadActivityFile();
     await this.events.alarm();
+    await this.schedule();
   }
 }
 

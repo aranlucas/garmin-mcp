@@ -97,7 +97,6 @@ function latest<T extends Timed>(data: DayData, type: string, schema: z.ZodType<
     return result.success ? [result.data] : [];
   });
 
-  // Stable sort: among equal durations the latest delivery wins.
   return parsed.toSorted((a, b) => (a.durationInSeconds ?? 0) - (b.durationInSeconds ?? 0)).at(-1);
 }
 

@@ -2,7 +2,7 @@ import { McpServer, ResourceNotFoundError } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { registerTrainingTools, TRAINING_INSTRUCTIONS } from "./training/mcp";
 import { TrainingClient } from "./training/client";
-import { listSummariesInput, summaryType, isActivityType } from "./push/schemas";
+import { listSummariesInput, summaryType, isActivityType, summaryPermission } from "./push/schemas";
 import type { GarminUserData } from "./push/store";
 import { registerEvents } from "./events/mcp";
 import type { EventOwner } from "./events/protocol";
@@ -76,10 +76,10 @@ export function createServer(
     registerEvents(server, store, eventOwner, client);
   }
 
-  async function permitted(type: string, signal: AbortSignal) {
+  async function permitted(type: z.infer<typeof summaryType>, signal: AbortSignal) {
     const permissions = await client.getPermissions(signal);
 
-    const needed = isActivityType(type) ? "ACTIVITY_EXPORT" : "HEALTH_EXPORT";
+    const needed = summaryPermission(type);
 
     if (!permissions.includes(needed)) {
       throw new Error(`Garmin ${needed} permission is missing. Reconnect Garmin in Auth.`);

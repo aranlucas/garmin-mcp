@@ -10,7 +10,8 @@ import {
   summaryType,
   userId,
 } from "./schemas";
-import { userStore, type StoredSummary } from "./store";
+import { userStore } from "./store";
+import type { StoredSummary } from "./schemas";
 import { activityFileNotification, type ActivityFileNotification } from "../activity/files";
 
 interface PermissionChange {
