@@ -8,3 +8,5 @@ output/
 .playwright-cli/
 .cloudflare/
 build/
+
+.e2e/

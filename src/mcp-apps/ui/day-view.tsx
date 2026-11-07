@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { z } from "zod";
 import { activityData, ActivityPanel, activityTitle, type ActivityData } from "./activity-view";
 import { GoalRings, LineChart, SegmentedBar, Stat, type Badge, type Point } from "./chart";
@@ -379,24 +379,33 @@ function DayPanel({ data, onOpen }: PanelProps) {
 }
 
 type Screen =
-  | { kind: "day"; loaded: Loaded<DayData> }
+  | { kind: "day"; date?: string; loaded: Loaded<DayData> }
   | { kind: "activity"; day: Loaded<DayData>; loaded: Loaded<ActivityData | null> };
 
 export function DayView({ tool }: ViewProps) {
   const { app, context } = useHost();
+  const navigation = useRef(0);
   const [screen, setScreen] = useState<Screen | null>(null);
   const current: Screen = screen ?? { kind: "day", loaded: readResult(tool.result, dayData) };
   const input = z.object({ date: z.string() }).safeParse(tool.input);
 
   const goTo = async (date: string) => {
-    setScreen({ kind: "day", loaded: { state: "loading" } });
+    const request = ++navigation.current;
+    setScreen({ kind: "day", date, loaded: { state: "loading" } });
     const loaded = await callTool(app, "get_garmin_day", { date }, dayData);
-    setScreen({ kind: "day", loaded });
+    if (request !== navigation.current) {
+      return;
+    }
+
+    setScreen({ kind: "day", date, loaded });
     shareWithModel(app, `The user is viewing their Garmin day ${date} in the day view.`);
   };
 
   if (current.kind === "activity") {
-    const back = () => setScreen({ kind: "day", loaded: current.day });
+    const back = () => {
+      navigation.current++;
+      setScreen({ kind: "day", loaded: current.day });
+    };
 
     return (
       <>
@@ -426,11 +435,18 @@ export function DayView({ tool }: ViewProps) {
   const loaded = current.loaded;
 
   const date =
-    loaded.state === "ready" ? loaded.data.date : input.success ? input.data.date : undefined;
+    loaded.state === "ready"
+      ? loaded.data.date
+      : (current.date ?? (input.success ? input.data.date : undefined));
 
   const open = async (activityId: string) => {
+    const request = ++navigation.current;
     setScreen({ kind: "activity", day: loaded, loaded: { state: "loading" } });
     const activity = await callTool(app, "get_garmin_activity", { activityId }, activityData);
+    if (request !== navigation.current) {
+      return;
+    }
+
     setScreen({ kind: "activity", day: loaded, loaded: activity });
     shareWithModel(app, `The user opened Garmin activity ${activityId} from the day view.`);
   };

@@ -24,6 +24,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Set up pnpm and Node.js
         uses: pnpm/setup@fa36a5ef7dcdefc3a7cb25655c122e00cf6e636e # v3.1.2
         with:
@@ -40,3 +41,24 @@ jobs:
         run: pnpm run test:apps
       - name: Build
         run: pnpm run build
+      - name: Install browser for deterministic e2e journeys
+        run: pnpm exec e2e-web install chromium --with-deps
+      - name: Run deterministic MCP Apps journeys
+        run: pnpm exec e2e run
+      - name: Demonstrate navigation regressions on the audited baseline
+        run: |
+          git show 1a53cb8:src/mcp-apps/ui/day-view.tsx > src/mcp-apps/ui/day-view.tsx
+          git show 1a53cb8:src/events/store.ts > src/events/store.ts
+          pnpm run build:apps
+          E2E_BASELINE=1 pnpm exec vitest run --project worker test/events.test.ts -t "a stale permission denial"
+          E2E_BASELINE=1 pnpm exec e2e run --output .e2e-baseline
+      - name: Upload e2e failure evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-evidence
+          path: |
+            .e2e
+            .e2e-baseline
+          include-hidden-files: true
+          retention-days: 7

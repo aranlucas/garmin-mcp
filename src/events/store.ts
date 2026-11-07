@@ -645,6 +645,13 @@ export class GarminEvents {
     checks.set(key, pending);
     const access = await pending;
 
+    // Authorization belongs to the version read before I/O, never a refreshed subscription.
+    if (this.subscription(subscription.id)?.version !== subscription.version) {
+      this.retry(job, "subscription_changed");
+
+      return;
+    }
+
     if (access === "denied") {
       this.finish(job, "access_revoked");
       this.sql.exec("DELETE FROM event_subscriptions WHERE id=?", subscription.id);

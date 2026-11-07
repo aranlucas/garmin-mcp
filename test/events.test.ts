@@ -1096,3 +1096,60 @@ it("caches verified callbacks with fixed expiry and rechecks changed keys, URLs,
   await f.store.clear();
   expect(await f.count("event_verifications")).toBe(0);
 });
+
+/* oxlint-disable vitest/no-standalone-expect -- Native it.fails runs this same regression against the audited baseline in CI. */
+(process.env.E2E_BASELINE === "1" ? it.fails : it)(
+  "a stale permission denial cannot delete a refreshed subscription",
+  async () => {
+    const f = await fixture();
+    const first = await f.subscribe();
+    await f.push({ activities: [f.activity()] });
+    const original = required(f.fetcher.getMockImplementation(), "fixture fetch");
+    let release!: () => void;
+
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const waiting = vi.fn();
+    let hold = true;
+    f.fetcher.mockImplementation(async (input, init) => {
+      if (requestUrl(input).endsWith("/user/permissions") && hold) {
+        hold = false;
+        waiting();
+        await held;
+
+        return Response.json({ permissions: [] });
+      }
+
+      return original(input, init);
+    });
+    const delivery = f.flush();
+
+    try {
+      await vi.waitFor(() => expect(waiting).toHaveBeenCalledOnce());
+
+      const refreshed = await f.subscribe({
+        ...f.params(),
+        delivery: { ...f.params().delivery, secret: rotatedSecret },
+      });
+
+      expect(refreshed.id).toBe(first.id);
+    } finally {
+      release();
+    }
+
+    await delivery;
+    expect(await f.count("event_subscriptions")).toBe(1);
+    expect(await f.count("event_deliveries")).toBe(1);
+    expect(f.deliveries).toHaveLength(0);
+    await f.flush();
+    expect(f.deliveries).toHaveLength(1);
+    const sent = required(f.deliveries[0], "refreshed subscription delivery");
+    expect(new Webhook(rotatedSecret).verify(sent.body, sent.headers)).toMatchObject({
+      name: "garmin.activity.completed",
+    });
+  },
+);
+
+/* oxlint-enable vitest/no-standalone-expect */

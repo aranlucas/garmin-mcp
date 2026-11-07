@@ -28,6 +28,8 @@
     "vitest.config.ts",
     "oxfmt.config.ts",
     "codegen/*.ts",
-    ".cloudflare/types"
+    ".cloudflare/types",
+    "e2e/**/*.ts",
+    "e2e.config.ts"
   ]
 }
