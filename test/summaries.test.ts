@@ -426,3 +426,65 @@ it("requires explicit confirmation before deleting stored data and can collect a
   await store.ingest([row]);
   expect(await store.get("dailies", "delete")).not.toBeNull();
 });
+
+it.each([
+  {
+    name: "a Garmin rate limit",
+    reply: () => Promise.resolve(new Response(null, { status: 429 })),
+    says: "rate limit",
+    reconnect: false,
+  },
+  {
+    name: "a Garmin outage",
+    reply: () => Promise.resolve(new Response(null, { status: 503 })),
+    says: "could not be reached",
+    reconnect: false,
+  },
+  {
+    name: "a network failure",
+    reply: () => Promise.reject(new Error("private-upstream-error")),
+    says: "could not be reached",
+    reconnect: false,
+  },
+  {
+    name: "a rejected Garmin token",
+    reply: () => Promise.resolve(new Response(null, { status: 401 })),
+    says: "expired or was revoked",
+    reconnect: true,
+  },
+])("explains $name without wrongly advising a reconnect", async ({ reply, says, reconnect }) => {
+  const { client, fetcher } = await connect(crypto.randomUUID(), ["HEALTH_EXPORT"]);
+  const range = { startDate: "2026-10-23", endDate: "2026-10-23" };
+
+  const calls = [
+    { name: "get_garmin_day", arguments: { date: "2026-10-23" } },
+    { name: "list_garmin_summaries", arguments: { type: "dailies", ...range } },
+    { name: "get_garmin_summary", arguments: { type: "dailies", summaryId: "any" } },
+    { name: "get_garmin_activity", arguments: { activityId: "123" } },
+  ];
+
+  for (const call of calls) {
+    fetcher.mockImplementationOnce(reply);
+    // oxlint-disable-next-line no-await-in-loop -- Each tool consumes one queued Garmin reply.
+    const text = JSON.stringify(await client.callTool(call));
+
+    expect(text).toContain('"isError":true');
+    expect(text).toContain(says);
+    expect(/reconnect/i.test(text)).toBe(reconnect);
+    expect(text).not.toContain("private-upstream-error");
+  }
+});
+
+it("names the missing sharing permission instead of a generic failure", async () => {
+  const { client } = await connect(crypto.randomUUID(), ["ACTIVITY_EXPORT"]);
+
+  const text = JSON.stringify(
+    await client.callTool({
+      name: "list_garmin_summaries",
+      arguments: { type: "dailies", startDate: "2026-10-23", endDate: "2026-10-23" },
+    }),
+  );
+
+  expect(text).toContain('"isError":true');
+  expect(text).toContain("sharing permission");
+});

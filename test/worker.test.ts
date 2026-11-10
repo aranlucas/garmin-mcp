@@ -18,6 +18,11 @@ import { receivePush } from "../src/push/handler";
 
 const base = env.PUBLIC_URL;
 
+const rejectionLog = z.strictObject({
+  event: z.literal("garmin_push_rejected"),
+  reason: z.literal("too_large"),
+});
+
 let privateKey: CryptoKey;
 
 let jwk: object;
@@ -494,6 +499,84 @@ it.each([`/webhook/garmin/${env.GARMIN_PUSH_TOKEN}`, `/garmin/push/${env.GARMIN_
     expect(await userStore(env, id).get("dailies", "http-push")).toContain('"steps":321');
   },
 );
+
+it("rejects an /mcp body over 64 KiB", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() =>
+      Promise.resolve(Response.json({ keys: [{ ...jwk, kid: "fixture", alg: "RS256" }] })),
+    ),
+  );
+
+  const config = bindings({
+    accessToken: "private-garmin-token",
+    expiresAt: Date.now() + 3600000,
+    garminUserId: "garmin-alice",
+  });
+
+  const response = await send(
+    "/mcp",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${await jwt()}`,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: { padding: "x".repeat(100 * 1024) },
+      }),
+    },
+    config,
+  );
+
+  expect(response.status).toBe(413);
+});
+
+it("checks the Garmin delivery credential before reading the body", async () => {
+  const response = await send("/webhook/garmin/wrong", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{not json",
+  });
+
+  expect(response.status).toBe(404);
+});
+
+it("accepts a Garmin delivery larger than 4 MiB and refuses one over the delivery limit", async () => {
+  const id = crypto.randomUUID();
+  const path = `/webhook/garmin/${env.GARMIN_PUSH_TOKEN}`;
+  const headers = { "Content-Type": "application/json" };
+
+  // 60 records of about 90 KiB each: a large delivery made of ordinary-sized rows.
+  const dailies = Array.from({ length: 60 }, (_, index) => ({
+    userId: id,
+    summaryId: `large-${index}`,
+    calendarDate: "2026-10-23",
+    padding: "x".repeat(90 * 1024),
+  }));
+
+  const large = JSON.stringify({ dailies });
+  expect(large.length).toBeGreaterThan(4 * 1024 * 1024);
+
+  const accepted = await send(path, { method: "POST", headers, body: large });
+  expect(accepted.status).toBe(200);
+  expect(await userStore(env, id).get("dailies", "large-59")).not.toBeNull();
+
+  const logs = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const tooLarge = JSON.stringify({ dailies: [{ padding: "x".repeat(8 * 1024 * 1024) }] });
+  const refused = await send(path, { method: "POST", headers, body: tooLarge });
+  const lines = logs.mock.calls.map(([line]) => String(line));
+  logs.mockRestore();
+
+  expect(refused.status).toBe(413);
+  expect(lines.map((line) => rejectionLog.parse(JSON.parse(line)))).toEqual([
+    { event: "garmin_push_rejected", reason: "too_large" },
+  ]);
+});
 
 it("verifies the OpenAI Events HTTP subscribe, signed delivery, refresh, and unsubscribe lifecycle", async () => {
   const signingSecret = `whsec_${Buffer.alloc(32, 7).toString("base64")}`;

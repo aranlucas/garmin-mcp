@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { readRequestBody } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
   isActivityType,
@@ -27,6 +28,37 @@ export function validPushCredential(value: string, expected: string) {
   return secret.length >= 32 && actual.length === secret.length && timingSafeEqual(actual, secret);
 }
 
+type PushRejection = "content_type" | "invalid_payload" | "invalid_record" | "too_large";
+
+const REJECTION_EVENT = "garmin_push_rejected";
+
+interface PushRejectionLog {
+  event: typeof REJECTION_EVENT;
+  reason: PushRejection;
+  type?: string;
+}
+
+/** Invocation logs are disabled, so this is the only trace of a refused delivery. Labels only:
+ * never URLs, account or summary IDs, or payload values. `type` is a key of the validated payload enum.
+ */
+function rejected(status: number, reason: PushRejection, type?: string): Response {
+  const line: PushRejectionLog = { event: REJECTION_EVENT, reason };
+
+  if (type) {
+    line.type = type;
+  }
+
+  // oxlint-disable-next-line no-console -- Workers Logs receives only these fixed labels.
+  console.warn(JSON.stringify(line));
+
+  return new Response(null, { status });
+}
+
+/** Twice the 4 MiB the router used to impose by accident. Garmin's largest real delivery is not
+ * known; search Workers Logs for `garmin_push_rejected` with reason `too_large` before raising it.
+ */
+export const MAX_PUSH_BYTES = 8 * 1024 * 1024;
+
 export async function receivePush(
   request: Request,
   env: Env,
@@ -37,13 +69,25 @@ export async function receivePush(
   }
 
   if (!request.headers.get("Content-Type")?.startsWith("application/json")) {
-    return new Response(null, { status: 415 });
+    return rejected(415, "content_type");
   }
 
-  const body = pushPayload.safeParse(await request.json().catch(() => null));
+  const read = await readRequestBody(request, MAX_PUSH_BYTES);
+
+  if (read.tooLarge) {
+    return rejected(413, "too_large");
+  }
+
+  let body: ReturnType<typeof pushPayload.safeParse>;
+
+  try {
+    body = pushPayload.safeParse(JSON.parse(read.text));
+  } catch {
+    return rejected(400, "invalid_payload");
+  }
 
   if (!body.success) {
-    return new Response(null, { status: 400 });
+    return rejected(400, "invalid_payload");
   }
 
   const groups = new Map<string, StoredSummary[]>();
@@ -57,7 +101,7 @@ export async function receivePush(
         const parsed = activityFileNotification.safeParse(value);
 
         if (!parsed.success) {
-          return new Response(null, { status: 400 });
+          return rejected(400, "invalid_record", type);
         }
 
         const rows = files.get(parsed.data.userId) ?? [];
@@ -70,14 +114,14 @@ export async function receivePush(
         const parsed = notification.safeParse(value);
 
         if (!parsed.success) {
-          return new Response(null, { status: 400 });
+          return rejected(400, "invalid_record", type);
         }
 
         if (
           type === "userPermissionsChange" &&
           (!parsed.data.permissions || parsed.data.changeTimeInSeconds === undefined)
         ) {
-          return new Response(null, { status: 400 });
+          return rejected(400, "invalid_record", type);
         }
 
         if (type === "deregistrations") {
@@ -96,7 +140,7 @@ export async function receivePush(
       const parsed = summary.safeParse(value);
 
       if (!parsed.success) {
-        return new Response(null, { status: 400 });
+        return rejected(400, "invalid_record", type);
       }
 
       const item = parsed.data;

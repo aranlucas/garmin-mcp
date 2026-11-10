@@ -1,10 +1,10 @@
 type CountRow = { n: number };
 
 /* oxlint-disable no-await-in-loop -- Each delivery in these scenarios depends on the previous state transition. */
-import type { z } from "zod";
+import { z } from "zod";
 import { env } from "cloudflare:workers";
 import { runInDurableObject, runDurableObjectAlarm, evictDurableObject } from "cloudflare:test";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { receivePush } from "../src/push/handler";
 import { userStore } from "../src/push/store";
 import { summaryDate, summary } from "../src/push/schemas";
@@ -27,6 +27,12 @@ const record = (userId: string, summaryId = "daily-1", steps = 123) => ({
   calendarDate: "2026-10-23",
   startTimeInSeconds: 1792713600,
   steps,
+});
+
+const rejectionLog = z.strictObject({
+  event: z.literal("garmin_push_rejected"),
+  reason: z.enum(["content_type", "invalid_payload", "invalid_record"]),
+  type: z.string().optional(),
 });
 
 it("authenticates delivery, rejects invalid payloads and does not accept ping/file URLs", async () => {
@@ -186,6 +192,48 @@ it("uses the provider calendar date or device offset, including nested activity 
   ).toBe("1970-01-02");
 });
 
+it("stores body composition and blood pressure deliveries by their measurement time", async () => {
+  const id = crypto.randomUUID();
+  const store = userStore(env, id);
+
+  // Shapes follow ClientBodyComp and ClientBloodPressure in docs/garmin-wellness-openapi.json.
+  const delivered = await push({
+    bodyComps: [
+      {
+        userId: id,
+        summaryId: "weight-1",
+        measurementTimeInSeconds: 1792713600,
+        measurementTimeOffsetInSeconds: -25200,
+        weightInGrams: 70500,
+      },
+    ],
+    bloodPressures: [
+      {
+        userId: id,
+        summaryId: "pressure-1",
+        measurementTimeInSeconds: 1792713600,
+        measurementTimeOffsetInSeconds: 3600,
+        systolic: 120,
+        diastolic: 80,
+      },
+    ],
+  });
+
+  expect(delivered.status).toBe(200);
+
+  const weights = await store.list("bodyComps", "2026-10-22", "2026-10-22", 50, 0);
+  expect(weights.records).toHaveLength(1);
+  expect(weights.records[0]?.summaryJSON).toContain('"weightInGrams":70500');
+
+  const pressures = await store.list("bloodPressures", "2026-10-23", "2026-10-23", 50, 0);
+  expect(pressures.records).toHaveLength(1);
+  expect(pressures.records[0]?.summaryJSON).toContain('"systolic":120');
+});
+
+it("still rejects a summary that has no date, start time or measurement time", async () => {
+  expect((await push({ bodyComps: [{ userId: "a", summaryId: "no-time" }] })).status).toBe(400);
+});
+
 it("keeps the latest complete health summary when Garmin changes its summary ID", async () => {
   const id = crypto.randomUUID();
   const store = userStore(env, id);
@@ -196,6 +244,32 @@ it("keeps the latest complete health summary when Garmin changes its summary ID"
   const rows = await store.list("epochs", "2026-10-23", "2026-10-23", 50, 0);
   expect(rows.records).toHaveLength(1);
   expect(rows.records[0]?.summaryJSON).toContain("complete");
+});
+
+it("keeps one epoch per activity type for the same window and replaces only a revision", async () => {
+  const id = crypto.randomUUID();
+  const store = userStore(env, id);
+
+  // Shape follows ClientEpoch in docs/garmin-wellness-openapi.json.
+  const epoch = (summaryId: string, activityType: string, steps: number) => ({
+    ...record(id, summaryId, steps),
+    activityType,
+    durationInSeconds: 900,
+    activeTimeInSeconds: 450,
+  });
+
+  await push({ epochs: [epoch("walk-1", "WALKING", 600), epoch("still-1", "SEDENTARY", 0)] });
+  const both = await store.list("epochs", "2026-10-23", "2026-10-23", 50, 0);
+  expect(both.records).toHaveLength(2);
+
+  await push({ epochs: [epoch("walk-2", "WALKING", 640)] });
+  const revised = await store.list("epochs", "2026-10-23", "2026-10-23", 50, 0);
+  const stored = revised.records.map((row) => row.summaryJSON).join("\n");
+
+  expect(revised.records).toHaveLength(2);
+  expect(stored).toContain("walk-2");
+  expect(stored).toContain("still-1");
+  expect(stored).not.toContain("walk-1");
 });
 
 it("withdraws only the affected data category and ignores stale permission events", async () => {
@@ -214,4 +288,28 @@ it("withdraws only the affected data category and ignores stale permission event
   await push({ activities: [record(id)] });
   expect(await store.get("activities", "daily-1")).toBeNull();
   expect(await store.get("dailies", "daily-1")).not.toBeNull();
+});
+
+it("logs each rejected delivery with fixed labels and no delivered values", async () => {
+  const logs = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const id = `private-${crypto.randomUUID()}`;
+
+  await push({
+    sleeps: [{ userId: id, summaryId: "private-summary", calendarDate: "not-a-date" }],
+  });
+  await push({ activityFiles: [{ userId: id, callbackURL: "https://evil.example/file" }] });
+  await push({ unknownCategory: [] });
+  await push({ dailies: [{ userId: id, summaryId: "ok", calendarDate: "2026-10-23" }] });
+  await push({ dailies: [] }, "wrong-credential");
+
+  const lines = logs.mock.calls.map(([line]) => String(line));
+  logs.mockRestore();
+
+  expect(lines.map((line) => rejectionLog.parse(JSON.parse(line)))).toEqual([
+    { event: "garmin_push_rejected", reason: "invalid_record", type: "sleeps" },
+    { event: "garmin_push_rejected", reason: "invalid_record", type: "activityFiles" },
+    { event: "garmin_push_rejected", reason: "invalid_payload" },
+  ]);
+  expect(lines.join("\n")).not.toContain("private-");
+  expect(lines.join("\n")).not.toContain("evil.example");
 });
