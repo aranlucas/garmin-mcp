@@ -2,7 +2,8 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { GarminUserData } from "../push/store";
 import { decodeClaimedActivityFile, garminActivityId } from "./files";
-import { storedJson, toolError, toolResult } from "../tool-result";
+import { GarminError } from "../garmin-error";
+import { readFailure, storedJson, toolError, toolResult } from "../tool-result";
 import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
 import { appMeta } from "../mcp-apps/resources";
 
@@ -78,10 +79,8 @@ export function registerActivityTools(server: McpServer, access: ActivityAccess)
         };
 
         return toolResult(output);
-      } catch {
-        return toolError(
-          "Garmin activity is unavailable or permission was withdrawn. Reconnect Garmin in Auth and try again.",
-        );
+      } catch (error) {
+        return toolError(readFailure(error instanceof GarminError ? error.status : undefined));
       }
     },
   );

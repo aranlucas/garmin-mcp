@@ -65,12 +65,17 @@ export const summary = z
     durationInSeconds: z.number().nonnegative().optional(),
     startTimeInSeconds: z.number().int().nonnegative().optional(),
     startTimeOffsetInSeconds: z.number().int().min(-86400).max(86400).optional(),
+    measurementTimeInSeconds: z.number().int().nonnegative().optional(),
+    measurementTimeOffsetInSeconds: z.number().int().min(-86400).max(86400).optional(),
     summary: z.looseObject(timing.shape).optional(),
   })
   .refine(
     (value) =>
-      value.calendarDate !== undefined || value.startTimeInSeconds !== undefined || value.summary,
-    { message: "Summary requires a calendar date or start time." },
+      value.calendarDate !== undefined ||
+      value.startTimeInSeconds !== undefined ||
+      value.measurementTimeInSeconds !== undefined ||
+      value.summary,
+    { message: "Summary requires a calendar date, start time or measurement time." },
   );
 
 export const notification = z.object({
@@ -97,8 +102,17 @@ export function summaryDate(value: Summary): string {
     return value.calendarDate;
   }
 
-  const seconds = value.startTimeInSeconds ?? value.summary?.startTimeInSeconds ?? 0;
-  const offset = value.startTimeOffsetInSeconds ?? value.summary?.startTimeOffsetInSeconds ?? 0;
+  const seconds =
+    value.startTimeInSeconds ??
+    value.summary?.startTimeInSeconds ??
+    value.measurementTimeInSeconds ??
+    0;
+
+  const offset =
+    value.startTimeOffsetInSeconds ??
+    value.summary?.startTimeOffsetInSeconds ??
+    value.measurementTimeOffsetInSeconds ??
+    0;
 
   return new Date((seconds + offset) * 1000).toISOString().slice(0, 10);
 }

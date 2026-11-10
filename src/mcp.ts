@@ -9,7 +9,8 @@ import type { EventOwner } from "./events/protocol";
 import { registerActivityTools, activityFit } from "./activity/mcp";
 import { garminActivityId } from "./activity/files";
 import { dayInput, getGarminDay } from "./day";
-import { storedJson, toolError, toolResult } from "./tool-result";
+import { GarminError } from "./garmin-error";
+import { readFailure, storedJson, toolError, toolResult } from "./tool-result";
 import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
 import { appMeta, registerApps } from "./mcp-apps/resources";
 
@@ -82,7 +83,7 @@ export function createServer(
     const needed = summaryPermission(type);
 
     if (!permissions.includes(needed)) {
-      throw new Error(`Garmin ${needed} permission is missing. Reconnect Garmin in Auth.`);
+      throw new GarminError(`Garmin ${needed} permission is missing.`, 403);
     }
   }
 
@@ -115,10 +116,8 @@ export function createServer(
         const permissions = await client.getPermissions(ctx.mcpReq.signal);
 
         return result(await getGarminDay(store, input, permissions));
-      } catch {
-        return toolError(
-          "Garmin day data is unavailable. Check your connection and permissions in Auth and try again.",
-        );
+      } catch (error) {
+        return toolError(readFailure(error instanceof GarminError ? error.status : undefined));
       }
     },
   );
@@ -155,10 +154,8 @@ export function createServer(
             summary: storedJson(summaryJSON),
           })),
         });
-      } catch {
-        return toolError(
-          "Garmin data is unavailable or permission was withdrawn. Reconnect Garmin in Auth and try again.",
-        );
+      } catch (error) {
+        return toolError(readFailure(error instanceof GarminError ? error.status : undefined));
       }
     },
   );
@@ -190,10 +187,8 @@ export function createServer(
         }
 
         return result(data);
-      } catch {
-        return toolError(
-          "Garmin data is unavailable or permission was withdrawn. Reconnect Garmin in Auth and try again.",
-        );
+      } catch (error) {
+        return toolError(readFailure(error instanceof GarminError ? error.status : undefined));
       }
     },
   );

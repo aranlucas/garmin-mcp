@@ -27,6 +27,11 @@ type ActivitySummaryRow = DataRow & { type: string };
 
 type ActivityOwner = { subject: string; garmin_id: string };
 
+// Garmin sends one epoch per activity type for the same window, so only a revision of the same
+// activity type replaces an earlier epoch. Every other category keeps one row per start time.
+const SAME_SLOT =
+  "(type<>'epochs' OR json_extract(data,'$.activityType') IS json_extract(?,'$.activityType'))";
+
 /** One SQLite object per immutable Garmin account ID, never per client-supplied tool input. */
 export class GarminUserData extends DurableObject<Env> {
   private readonly events: GarminEvents;
@@ -87,10 +92,11 @@ export class GarminUserData extends DurableObject<Env> {
         if (row.startTime !== undefined) {
           const newer = this.ctx.storage.sql
             .exec(
-              "SELECT id FROM summaries WHERE type=? AND start_time=? AND duration>?",
+              `SELECT id FROM summaries WHERE type=? AND start_time=? AND duration>? AND ${SAME_SLOT}`,
               row.type,
               row.startTime,
               row.duration ?? 0,
+              row.data,
             )
             .toArray();
 
@@ -99,10 +105,11 @@ export class GarminUserData extends DurableObject<Env> {
           }
 
           this.ctx.storage.sql.exec(
-            "DELETE FROM summaries WHERE type=? AND start_time=? AND id<>?",
+            `DELETE FROM summaries WHERE type=? AND start_time=? AND id<>? AND ${SAME_SLOT}`,
             row.type,
             row.startTime,
             row.summaryId,
+            row.data,
           );
         }
 
