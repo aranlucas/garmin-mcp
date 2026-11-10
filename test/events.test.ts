@@ -1097,52 +1097,70 @@ it("caches verified callbacks with fixed expiry and rechecks changed keys, URLs,
   expect(await f.count("event_verifications")).toBe(0);
 });
 
-/* oxlint-disable vitest/no-standalone-expect -- Native it.fails runs this same regression against the audited baseline in CI. */
-(process.env.E2E_BASELINE === "1" ? it.fails : it)(
-  "a stale permission denial cannot delete a refreshed subscription",
-  async () => {
-    const f = await fixture();
-    const first = await f.subscribe();
-    await f.push({ activities: [f.activity()] });
-    const original = required(f.fetcher.getMockImplementation(), "fixture fetch");
-    let release!: () => void;
+/** Holds the first delivery's permission check, refreshes the subscription, then returns the old denial. */
+async function staleDenial() {
+  const f = await fixture();
+  const first = await f.subscribe();
+  await f.push({ activities: [f.activity()] });
+  const original = required(f.fetcher.getMockImplementation(), "fixture fetch");
+  let release!: () => void;
 
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
 
-    const waiting = vi.fn();
-    let hold = true;
-    f.fetcher.mockImplementation(async (input, init) => {
-      if (requestUrl(input).endsWith("/user/permissions") && hold) {
-        hold = false;
-        waiting();
-        await held;
+  const waiting = vi.fn();
+  let hold = true;
+  f.fetcher.mockImplementation(async (input, init) => {
+    if (requestUrl(input).endsWith("/user/permissions") && hold) {
+      hold = false;
+      waiting();
+      await held;
 
-        return Response.json({ permissions: [] });
-      }
-
-      return original(input, init);
-    });
-    const delivery = f.flush();
-
-    try {
-      await vi.waitFor(() => expect(waiting).toHaveBeenCalledOnce());
-
-      const refreshed = await f.subscribe({
-        ...f.params(),
-        delivery: { ...f.params().delivery, secret: rotatedSecret },
-      });
-
-      expect(refreshed.id).toBe(first.id);
-    } finally {
-      release();
+      return Response.json({ permissions: [] });
     }
 
-    await delivery;
-    expect(await f.count("event_subscriptions")).toBe(1);
-    expect(await f.count("event_deliveries")).toBe(1);
-    expect(f.deliveries).toHaveLength(0);
+    return original(input, init);
+  });
+  const delivery = f.flush();
+
+  try {
+    await vi.waitFor(() => expect(waiting).toHaveBeenCalledOnce());
+
+    // A signing-key rotation re-verifies the callback and permissions, bumping the version.
+    const refreshed = await f.subscribe({
+      ...f.params(),
+      delivery: { ...f.params().delivery, secret: rotatedSecret },
+    });
+
+    expect(refreshed.id).toBe(first.id);
+  } finally {
+    release();
+  }
+
+  await delivery;
+
+  return f;
+}
+
+async function expectRefreshRetained(f: Awaited<ReturnType<typeof fixture>>) {
+  expect({
+    subscriptions: await f.count("event_subscriptions"),
+    deliveries: await f.count("event_deliveries"),
+    sent: f.deliveries.length,
+  }).toEqual({ subscriptions: 1, deliveries: 1, sent: 0 });
+}
+
+// CI sets E2E_BASELINE=1 after restoring the audited src/events/store.ts (1a53cb8); vitest.config.ts
+// forwards it as a binding. If it were lost, this case would run on the baseline and fail loudly.
+const baseline = process.env.E2E_BASELINE === "1";
+
+it.skipIf(baseline)(
+  "a stale permission denial cannot delete a refreshed subscription",
+  async () => {
+    const f = await staleDenial();
+
+    await expectRefreshRetained(f);
     await f.flush();
     expect(f.deliveries).toHaveLength(1);
     const sent = required(f.deliveries[0], "refreshed subscription delivery");
@@ -1152,4 +1170,13 @@ it("caches verified callbacks with fixed expiry and rechecks changed keys, URLs,
   },
 );
 
-/* oxlint-enable vitest/no-standalone-expect */
+// The scenario itself must succeed on the baseline; only the retention assertion may fail there,
+// so fixture or harness errors still fail this case.
+it.runIf(baseline)(
+  "audited baseline: a stale permission denial deletes the refreshed subscription",
+  async () => {
+    const f = await staleDenial();
+
+    await expect(expectRefreshRetained(f)).rejects.toMatchObject({ name: "AssertionError" });
+  },
+);
