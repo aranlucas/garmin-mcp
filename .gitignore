@@ -10,3 +10,4 @@ output/
 build/
 
 .e2e/
+.e2e-baseline/

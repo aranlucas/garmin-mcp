@@ -1,6 +1,6 @@
 # Correctness and reliability audit — 2026-11-06
 
-Baseline: remote default `origin/main`, `1a53cb8` (merged untangle pass). Clean isolated worktree. Tests and builds run in CI only.
+Baseline: remote default `origin/main`, `1a53cb8` (merged untangle pass). Clean isolated worktree. Tests and builds originally ran in CI only; see Validation for the later local run.
 
 ## Inventory and trust boundaries
 
@@ -68,4 +68,26 @@ CI restores only `src/mcp-apps/ui/day-view.tsx` and `src/events/store.ts` from `
 
 ## Validation and review
 
-Pending CI on the follow-up PR. No local tests or builds executed. Independent review pending.
+GitHub Actions did not run on #51 or its follow-up: account billing blocks the job from starting. The owner then authorized running every CI gate locally. #51 merged (`6b09f6d`) before that run, and the run found that `e2e/host.ts` failed `tsc`. The shared tsconfig merges the workers-types HTMLRewriter `Element` into the DOM `Element`, so `list.append(li)` accepted only rewriter content. The follow-up uses `insertAdjacentElement`, which keeps the DOM signature, and ignores `.e2e-baseline/`.
+
+Local run on 2026-11-09 (Node 24.22.1, pnpm 12.16.1, Playwright Chromium 1248), following the `ci.yml` steps in order:
+
+| Gate                                                          | Result                                                                      |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Codegen build, test, `git diff --exit-code -- src/garmin-api` | clean, 2 passed                                                             |
+| `pnpm run check` (typegen, tsc, oxlint, oxfmt, Worker tests)  | 13 files; 244 passed, 1 skipped (the baseline-only case)                    |
+| `pnpm run test:apps`                                          | 5 passed                                                                    |
+| `pnpm run build`                                              | passed                                                                      |
+| `pnpm exec e2e run`                                           | 4 of 4 journeys passed                                                      |
+| Baseline: `git diff --stat -- src`                            | only `day-view.tsx` and `events/store.ts`                                   |
+| Baseline Worker case (`E2E_BASELINE=1`)                       | 1 passed (the audited-baseline variant), 28 skipped                         |
+| Baseline e2e (`--trace on`)                                   | 4 of 4 failed as expected, each with `ASSERTION_FAILED` at the defect check |
+
+Baseline failures as the traces record them, which confirms that the product defect fails, not the harness:
+
+- R1: `#context li` expected count 0, observed 1. The late activity reply published its context.
+- R2, pending: calls were `2026-10-19, 2026-10-19`, expected `2026-10-19, 2026-10-18`.
+- R2, out of order: the latest day's activity button `20261021` was not rendered, because the older reply won.
+- R2, after an error: calls were `2026-10-19, 2026-10-19`, expected `2026-10-19, 2026-10-18`.
+
+After the baseline run, the two source files were restored from saved copies under a shell `EXIT` trap. The working tree diff was byte-identical to the one taken before the baseline run, and rebuilding reproduced the fixed bundle (`garmin-app-BKYTjfvE.js`; the baseline bundle was `garmin-app-BhX5b1sv.js`). Nothing ran against production Garmin, Auth or callback services, and no model credentials were used. An independent Opus review ran separately.
