@@ -40,7 +40,9 @@ const log = (list: Element, text: string) => {
   const item = document.createElement("li");
 
   item.textContent = text;
-  list.append(item);
+  // The shared tsconfig merges workers-types' HTMLRewriter Element into the DOM Element, so its
+  // append accepts only rewriter content; insertAdjacentElement keeps the DOM signature.
+  list.insertAdjacentElement("beforeend", item);
 };
 
 const message = z.looseObject({ jsonrpc: z.literal("2.0"), id: z.union([z.string(), z.number()]) });
