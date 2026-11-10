@@ -45,14 +45,18 @@ jobs:
         run: pnpm exec e2e-web install chromium --with-deps
       - name: Run deterministic MCP Apps journeys
         run: pnpm exec e2e run
-      - name: Demonstrate navigation regressions on the audited baseline
+      # Restores only the two audited source files; the rest of the tree (tests, harness, fixtures)
+      # stays current. Every journey and the Worker case mark the expected failure after their
+      # actions and reply barriers succeed, so harness errors and unexpected passes fail this step.
+      - name: Reproduce audited defects on the 1a53cb8 baseline
         run: |
           git show 1a53cb8:src/mcp-apps/ui/day-view.tsx > src/mcp-apps/ui/day-view.tsx
           git show 1a53cb8:src/events/store.ts > src/events/store.ts
+          git diff --stat -- src
           pnpm run build:apps
-          E2E_BASELINE=1 pnpm exec vitest run --project worker test/events.test.ts -t "a stale permission denial"
-          E2E_BASELINE=1 pnpm exec e2e run --output .e2e-baseline
-      - name: Upload e2e failure evidence
+          E2E_BASELINE=1 pnpm exec vitest run --project worker test/events.test.ts -t "stale permission denial"
+          E2E_BASELINE=1 pnpm exec e2e run --output .e2e-baseline --trace on
+      - name: Upload e2e and baseline evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

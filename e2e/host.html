@@ -9,8 +9,10 @@
       sandbox="allow-scripts allow-same-origin"
       style="width: 100%; height: 900px; border: 0"
     ></iframe>
-    <button id="resolve">Resolve pending replies</button><output id="settled"></output
-    ><output id="context"></output><output id="calls"></output>
+    <button id="resolve" type="button">Resolve pending replies</button>
+    <p>Tool replies handled: <output id="settled">0</output></p>
+    <ol id="calls" aria-label="Tool calls"></ol>
+    <ol id="context" aria-label="Model context"></ol>
     <script type="module" src="./host.ts"></script>
   </body>
 </html>

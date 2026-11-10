@@ -8,7 +8,13 @@ export default {
       engine: web(),
       app: {
         url: "http://127.0.0.1:4173",
-        command: { executable: "pnpm", args: ["exec", "vite", "--config", "e2e/vite.config.ts"] },
+        readyUrl: "http://127.0.0.1:4173/e2e/host.html",
+        command: {
+          executable: "pnpm",
+          args: ["exec", "vite", "--config", "e2e/vite.config.ts"],
+          // Startup and transform errors from the fixture server, uploaded with the e2e evidence.
+          log: ".e2e/logs/vite.log",
+        },
       },
     },
   ],

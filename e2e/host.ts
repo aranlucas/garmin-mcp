@@ -1,93 +1,121 @@
-import { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type { Transport, JSONRPCMessage } from "@modelcontextprotocol/client";
+// Fixture MCP Apps host: the official AppBridge and PostMessageTransport drive the real built view.
+// Tool replies are held until the test releases them, so journeys control their order and timing.
+import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";
+import type { CallToolResult } from "@modelcontextprotocol/client";
 import { z } from "zod";
 import { required } from "../test/support";
 import bundle from "../build/mcp-apps/garmin-app.html?raw";
 
 const frame = required(document.querySelector("iframe"), "fixture frame");
+const view = required(frame.contentWindow, "frame window");
 const calls = required(document.querySelector("#calls"), "call log");
-let responseCount = 0;
-const pending: (() => void)[] = [];
+const context = required(document.querySelector("#context"), "model context log");
+const settled = required(document.querySelector("#settled"), "reply barrier");
 
-const result = (data: z.infer<ReturnType<typeof z.json>>) => ({
+// Day requests for this date fail with Garmin's fixed error text, as an unavailable day would.
+const failing = new URLSearchParams(location.search).get("fail");
+
+/** Activity IDs derive from the day, so the screen shows which reply it rendered. */
+const activityFor = (date: string) => date.replaceAll("-", "");
+
+const envelope = (data: z.infer<ReturnType<typeof z.json>>): CallToolResult => ({
   content: [],
   structuredContent: { source: "Garmin Connect", data },
 });
 
-const day = (date: string) =>
-  result({
-    date,
-    sections: {
-      activities: {
-        availability: "available",
-        records: [{ summaryId: "a1", activityId: "123" }],
-      },
-    },
-  });
+const day = (date: string): CallToolResult =>
+  date === failing
+    ? { isError: true, content: [{ type: "text", text: "Garmin day unavailable." }] }
+    : envelope({
+        date,
+        sections: {
+          activities: {
+            availability: "available",
+            records: [{ summaryId: `s-${date}`, activityId: activityFor(date) }],
+          },
+        },
+      });
 
-const transport: Transport = {
-  start: () => Promise.resolve(),
-  send: (message) => {
-    required(frame.contentWindow, "frame window").postMessage(message, "*");
+const log = (list: Element, text: string) => {
+  const item = document.createElement("li");
 
-    if (
-      z
-        .object({
-          result: z.union([
-            z.object({ hostInfo: z.unknown() }),
-            z.object({ structuredContent: z.unknown() }),
-          ]),
-        })
-        .safeParse(message).success
-    ) {
-      const count = ++responseCount;
-      required(frame.contentWindow, "frame window").postMessage({ auditBarrier: count }, "*");
-    }
-
-    return Promise.resolve();
-  },
-  close: () => Promise.resolve(),
+  item.textContent = text;
+  list.append(item);
 };
 
-window.addEventListener("message", (event: MessageEvent<JSONRPCMessage>) => {
-  if (event.source === frame.contentWindow) {
-    if ("auditRendered" in event.data) {
-      required(document.querySelector("#settled"), "response barrier").textContent = String(
-        event.data.auditRendered,
-      );
-    } else {
-      transport.onmessage?.(event.data);
-    }
+const message = z.looseObject({ jsonrpc: z.literal("2.0"), id: z.union([z.string(), z.number()]) });
+const toolCall = message.extend({ method: z.literal("tools/call") });
+
+// MCP results are objects; requests carry neither key, so they never count as replies.
+const reply = z.union([
+  message.extend({ result: z.looseObject({}) }),
+  message.extend({ error: z.looseObject({ code: z.number() }) }),
+]);
+
+// tools/call request IDs the view sent and the host has not yet answered.
+const unanswered = new Set<string | number>();
+let processed = 0;
+
+window.addEventListener("message", (event: MessageEvent<unknown>) => {
+  if (event.source !== view) {
+    return;
+  }
+
+  const call = toolCall.safeParse(event.data);
+  const rendered = z.object({ auditRendered: z.number() }).safeParse(event.data);
+
+  if (call.success) {
+    unanswered.add(call.data.id);
+  }
+
+  if (rendered.success) {
+    settled.textContent = String(rendered.data.auditRendered);
   }
 });
+
+const transport = new PostMessageTransport(view, view);
+const send = transport.send.bind(transport);
+
+// After each tool reply, the view echoes a barrier once it has handled and painted that reply.
+transport.send = async (outgoing, options) => {
+  await send(outgoing, options);
+  const answered = reply.safeParse(outgoing);
+
+  if (answered.success && unanswered.delete(answered.data.id)) {
+    view.postMessage({ auditBarrier: ++processed }, "*");
+  }
+};
 
 const bridge = new AppBridge(
   null,
   { name: "Audit fixture", version: "1" },
-  {
-    serverTools: {},
-    updateModelContext: { text: {} },
-  },
+  { serverTools: {}, updateModelContext: { text: {} } },
   { hostContext: { timeZone: "UTC", locale: "en-US" } },
 );
 
 bridge.onupdatemodelcontext = ({ content }) => {
-  required(document.querySelector("#context"), "context log").textContent +=
-    JSON.stringify(content);
+  for (const block of content ?? []) {
+    log(context, block.type === "text" ? block.text : block.type);
+  }
 
   return Promise.resolve({});
 };
 
+const pending: (() => void)[] = [];
+
 bridge.oncalltool = (params) => {
-  calls.textContent += JSON.stringify(params) + "\n";
+  const date = String(params.arguments?.date);
+  const activityId = String(params.arguments?.activityId);
+
+  log(calls, `${params.name} ${params.name === "get_garmin_day" ? date : activityId}`);
 
   return new Promise((resolve) => {
     pending.push(() =>
       resolve(
         params.name === "get_garmin_day"
-          ? day(String(params.arguments?.date))
-          : result({
-              activityId: "123",
+          ? day(date)
+          : envelope({
+              activityId,
               summary: { activityName: "Late activity", activityType: "RUNNING" },
               details: null,
               fit: null,
@@ -98,7 +126,7 @@ bridge.oncalltool = (params) => {
 };
 
 required(document.querySelector("#resolve"), "resolve button").addEventListener("click", () => {
-  // Deliberately return the newest request first to expose stale completion bugs.
+  // Newest request first, so a stale completion arrives after the reply that should win.
   for (const resolve of pending.splice(0).toReversed()) {
     resolve();
   }
@@ -109,22 +137,29 @@ bridge.addEventListener("initialized", () => {
     .sendToolInput({ arguments: { date: "2026-10-20" } })
     .then(() => bridge.sendToolResult(day("2026-10-20")))
     .catch((error: Error) => {
-      calls.textContent = error.message;
+      log(calls, `host error: ${error.message}`);
     });
 });
 
 await bridge.connect(transport);
 
-frame.srcdoc = bundle
-  .replace(
-    "</head>",
-    `<script>
+const barrier = `<script>
 window.addEventListener("message", async (event) => {
-  if (!event.data.auditBarrier) return;
+  if (event.source !== parent || typeof event.data?.auditBarrier !== "number") return;
+  // Replies are handled in the message task; two frames let React commit and paint the result.
   await new Promise(requestAnimationFrame);
   await new Promise(requestAnimationFrame);
   parent.postMessage({ auditRendered: event.data.auditBarrier }, "*");
 });
-</script></head>`,
-  )
-  .replace('<html lang="en">', '<html lang="en" data-view="day">');
+</script>`;
+
+for (const marker of ['<html lang="en">', "</head>"]) {
+  if (!bundle.includes(marker)) {
+    throw new Error(`MCP Apps bundle is missing ${marker}`);
+  }
+}
+
+// The same day-view selection as src/mcp-apps/resources.ts appHtml, plus the barrier.
+frame.srcdoc = bundle
+  .replace('<html lang="en">', '<html lang="en" data-view="day">')
+  .replace("</head>", `${barrier}</head>`);

@@ -11,6 +11,8 @@ export default defineConfig({
             miniflare: {
               bindings: {
                 GARMIN_PUSH_TOKEN: "test-only-delivery-credential-with-at-least-32-characters",
+                // nodejs_compat exposes text bindings as process.env; CI's baseline reproduction sets it.
+                E2E_BASELINE: process.env.E2E_BASELINE ?? "",
               },
               durableObjects: { USER_DATA: { className: "GarminUserData", useSQLite: true } },
               serviceBindings: {

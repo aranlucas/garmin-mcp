@@ -393,6 +393,7 @@ export function DayView({ tool }: ViewProps) {
     const request = ++navigation.current;
     setScreen({ kind: "day", date, loaded: { state: "loading" } });
     const loaded = await callTool(app, "get_garmin_day", { date }, dayData);
+
     if (request !== navigation.current) {
       return;
     }
@@ -443,6 +444,7 @@ export function DayView({ tool }: ViewProps) {
     const request = ++navigation.current;
     setScreen({ kind: "activity", day: loaded, loaded: { state: "loading" } });
     const activity = await callTool(app, "get_garmin_activity", { activityId }, activityData);
+
     if (request !== navigation.current) {
       return;
     }
