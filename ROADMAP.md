@@ -25,6 +25,15 @@ Collect the baseline before building the first slice. Use voluntary pilot feedba
 
 Add one weekly-review resource/tool that composes existing reads and includes a coverage matrix, not a new scoring model.
 
+**Shipped (first slice):** `get_garmin_week` reviews seven dates from a user-chosen start date. It returns a coverage matrix of received-record counts for every category and date, cites daily, sleep and activity evidence by date and summary/activity ID, and reports `missingDates` (no daily summary), `unavailableCategories` (denied sharing) and `complete`. Remaining limits:
+
+- No MCP Apps week view.
+- No planned sessions from the Training calendar.
+- No totals or trends.
+- "Missing" is defined by the daily summary alone, which may not match every device setup.
+
+The pilot baseline above was not collected before this slice shipped. Collect it before expanding the review.
+
 ## Dependencies and deliberate limits
 
 Preserve [retained data during authorization outages](docs/authorization-retention.md) before relying on historical reviews. Keep exercise choices user-reviewed, label provider data gaps and avoid diagnostic or guaranteed-performance claims. Historical backfill requires actual provider support.

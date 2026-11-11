@@ -22,6 +22,7 @@ The ID comes from the linked account validated on the authenticated `/mcp` reque
 - `list_garmin_summaries`: paginate Health/Activity push summaries by category and a date range of at most 31 days.
 - `get_garmin_summary`: retrieve a received record by category and summary ID.
 - `get_garmin_day`: gather one date's Health summaries and Activity references across all categories, with per-category availability and pagination.
+- `get_garmin_week`: review seven consecutive dates with a per-category, per-date coverage matrix and cited daily, sleep and activity evidence, stating which dates are missing and which categories are withheld.
 - `get_garmin_activity`: retrieve a stored activity by Garmin activity ID, combining its summary, JSON details, and all automatically decoded FIT messages and fields.
 - Activity reads through `get_garmin_summary` also include the complete decoded FIT payload under `fit` when the record has an `activityId`.
 - `delete_stored_garmin_data`: delete this connector's retained Health/Activity data after explicit confirmation.
@@ -45,6 +46,22 @@ Call `get_garmin_day` with:
 Each section reports `availability` as `available`, `not_received`, or `permission_denied`. Missing records do not mean zero measurements or activity. Current Health and Activity sharing permissions are checked independently, so an authorized category remains readable when the other is denied. Permission lookup failures return a tool error rather than an empty day.
 
 Records follow the stored Garmin `calendarDate`, or the device-offset local start date when no calendar date was supplied. Receipt timestamps indicate when this connector received the record, not when the measurement happened. Every measurement within the page is preserved; no recovery score or other interpretation is calculated. When a section has `hasMore: true`, continue with `list_garmin_summaries`, passing its type, the requested date as both `startDate` and `endDate`, and `nextOffset` as `offset`.
+
+### Review a week
+
+Call `get_garmin_week` with:
+
+```json
+{ "startDate": "2026-10-19", "limitPerType": 50 }
+```
+
+The review covers `startDate` and the six following calendar dates (`dates`, `endDate`). The server stores no user time zone, so choose the start date yourself; relative inputs such as "this week" are rejected. `limitPerType` is optional (default 50, maximum 100).
+
+- `coverage` has one entry for every Health/Activity category: `availability` (`available`, `not_received`, `permission_denied`) and `counts`, the number of received records on each date. A denied category reports `counts: null`, so withheld data reveals nothing, not even record counts.
+- `evidence.dailies`, `evidence.sleeps` and `evidence.activities` cite each received record by `date`, `summaryId` and `receivedAt` (activities also `activityId`). `fields` holds the record's top-level Garmin measurement fields; sample arrays and nested values are omitted. Read them with `get_garmin_day`, `get_garmin_summary` or `get_garmin_activity`. Continue a section with `hasMore: true` through `list_garmin_summaries`, using its type, the week's `startDate`/`endDate`, and `nextOffset` as `offset`.
+- `missingDates` lists dates without a received daily summary (`dailies`), including every date when Health sharing is denied. `unavailableCategories` lists denied categories. `complete` is `true` only when both lists are empty.
+
+A missing date or category means no record was received, not that no activity happened. The review is a coverage report, not a score: it calculates no totals, trends or recovery values.
 
 ### Complete activity data from FIT
 

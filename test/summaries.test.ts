@@ -6,6 +6,7 @@ import { userStore } from "../src/push/store";
 import { requestUrl } from "./support";
 import { receivePush } from "../src/push/handler";
 import { summaryType } from "../src/push/schemas";
+import { z } from "zod";
 
 const categories = {
   health: [
@@ -458,6 +459,7 @@ it.each([
 
   const calls = [
     { name: "get_garmin_day", arguments: { date: "2026-10-23" } },
+    { name: "get_garmin_week", arguments: { startDate: "2026-10-19" } },
     { name: "list_garmin_summaries", arguments: { type: "dailies", ...range } },
     { name: "get_garmin_summary", arguments: { type: "dailies", summaryId: "any" } },
     { name: "get_garmin_activity", arguments: { activityId: "123" } },
@@ -487,4 +489,340 @@ it("names the missing sharing permission instead of a generic failure", async ()
 
   expect(text).toContain('"isError":true');
   expect(text).toContain("sharing permission");
+});
+
+function dailiesOn(userId: string, dates: string[]) {
+  return dates.map((calendarDate) => ({
+    userId,
+    summaryId: `dailies-${calendarDate}`,
+    calendarDate,
+    steps: 0,
+    timeOffsetHeartRateSamples: { "0": 61, "15": 62 },
+  }));
+}
+
+async function deliver(body: Record<string, unknown[]>) {
+  const response = await receivePush(
+    new Request("https://delivery.example/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+    env,
+    env.GARMIN_PUSH_TOKEN,
+  );
+
+  expect(response.status).toBe(200);
+}
+
+const week = [
+  "2026-10-19",
+  "2026-10-20",
+  "2026-10-21",
+  "2026-10-22",
+  "2026-10-23",
+  "2026-10-24",
+  "2026-10-25",
+];
+
+it("reviews seven dates with a per-category coverage matrix and cited, sample-free evidence", async () => {
+  const id = crypto.randomUUID();
+  const { client, fetcher } = await connect(id, ["HEALTH_EXPORT", "ACTIVITY_EXPORT"]);
+
+  await deliver({
+    // Six of seven dates, plus one record on each side of the week that must not be counted.
+    dailies: dailiesOn(id, ["2026-10-18", ...week.slice(0, 6), "2026-10-26"]),
+    sleeps: [
+      { userId: id, summaryId: "sleep-1", calendarDate: "2026-10-20", durationInSeconds: 0 },
+    ],
+    hrv: [{ userId: id, summaryId: "hrv-1", calendarDate: "2026-10-22", lastNightAvg: 41 }],
+    activities: ["run-1", "run-2"].map((summaryId, index) => ({
+      userId: id,
+      summaryId,
+      activityId: 9001 + index,
+      calendarDate: "2026-10-21",
+      activityType: "RUNNING",
+      durationInSeconds: 1800,
+      samples: [{ heartRate: 150 }],
+    })),
+  });
+  // Another account's daily summary must not fill this account's missing date.
+  await userStore(env, crypto.randomUUID()).ingest([
+    {
+      type: "dailies",
+      summaryId: "another-account",
+      date: "2026-10-25",
+      receivedAt: Date.now(),
+      data: '{"summaryId":"another-account"}',
+    },
+  ]);
+  fetcher.mockClear();
+
+  const review = await client.callTool({
+    name: "get_garmin_week",
+    arguments: { startDate: "2026-10-19" },
+  });
+
+  expect(review.isError).not.toBe(true);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+
+  const absent = Object.fromEntries(week.map((date) => [date, 0]));
+
+  expect(review.structuredContent).toMatchObject({
+    source: "Garmin Connect",
+    data: {
+      startDate: "2026-10-19",
+      endDate: "2026-10-25",
+      dates: week,
+      complete: false,
+      missingDates: ["2026-10-25"],
+      unavailableCategories: [],
+      coverage: {
+        dailies: {
+          availability: "available",
+          counts: { ...Object.fromEntries(week.map((date) => [date, 1])), "2026-10-25": 0 },
+        },
+        activities: { availability: "available", counts: { ...absent, "2026-10-21": 2 } },
+        hrv: { availability: "available", counts: { ...absent, "2026-10-22": 1 } },
+        bloodPressures: { availability: "not_received", counts: absent },
+        activityDetails: { availability: "not_received", counts: absent },
+      },
+      evidence: {
+        sleeps: {
+          availability: "available",
+          records: [
+            {
+              date: "2026-10-20",
+              summaryId: "sleep-1",
+              fields: { summaryId: "sleep-1", durationInSeconds: 0 },
+            },
+          ],
+          hasMore: false,
+          nextOffset: null,
+        },
+        activities: {
+          availability: "available",
+          records: [
+            {
+              date: "2026-10-21",
+              summaryId: "run-1",
+              activityId: "9001",
+              fields: { activityType: "RUNNING", durationInSeconds: 1800 },
+            },
+            { date: "2026-10-21", summaryId: "run-2", activityId: "9002" },
+          ],
+          hasMore: false,
+        },
+      },
+    },
+  });
+
+  const { data } = z
+    .object({
+      data: z.object({
+        evidence: z.object({
+          dailies: z.object({
+            records: z.array(
+              z.object({ date: z.string(), fields: z.record(z.string(), z.json()) }),
+            ),
+          }),
+        }),
+      }),
+    })
+    .parse(review.structuredContent);
+
+  expect(data.evidence.dailies.records.map((record) => record.date)).toEqual(week.slice(0, 6));
+  // Zero stays a measurement; nested samples stay behind get_garmin_day.
+  expect(data.evidence.dailies.records[0]?.fields).toEqual({
+    summaryId: "dailies-2026-10-19",
+    calendarDate: "2026-10-19",
+    steps: 0,
+  });
+
+  const serialized = JSON.stringify(review);
+  expect(serialized).not.toContain("samples");
+  expect(serialized).not.toContain("timeOffsetHeartRateSamples");
+  expect(serialized).not.toContain("another-account");
+  expect(serialized).not.toContain("dailies-2026-10-18");
+  expect(serialized).not.toContain("dailies-2026-10-26");
+  expect(serialized).not.toContain(id);
+  expect(serialized).not.toContain("private-access");
+});
+
+it("marks a week complete only when every date has a daily summary and nothing is withheld", async () => {
+  const id = crypto.randomUUID();
+  const { client } = await connect(id, ["HEALTH_EXPORT", "ACTIVITY_EXPORT"]);
+  await deliver({ dailies: dailiesOn(id, week) });
+
+  const review = await client.callTool({
+    name: "get_garmin_week",
+    arguments: { startDate: "2026-10-19" },
+  });
+
+  expect(review.structuredContent).toMatchObject({
+    data: { complete: true, missingDates: [], unavailableCategories: [] },
+  });
+});
+
+it.each([
+  {
+    permissions: ["HEALTH_EXPORT"],
+    withheld: ["activities", "activityDetails", "manuallyUpdatedActivities", "moveIQActivities"],
+    missingDates: ["2026-10-25"],
+  },
+  {
+    permissions: ["ACTIVITY_EXPORT"],
+    withheld: categories.health,
+    missingDates: week,
+  },
+])(
+  "withholds records and counts for denied categories: $permissions",
+  async ({ permissions, withheld, missingDates }) => {
+    const id = crypto.randomUUID();
+    const { client } = await connect(id, permissions);
+    // Stored before access changed: still unreadable while Garmin reports the permission missing.
+    await deliver({
+      dailies: dailiesOn(id, week.slice(0, 6)),
+      activities: [{ userId: id, summaryId: "hidden-run", activityId: 1, calendarDate: week[0] }],
+    });
+
+    const review = await client.callTool({
+      name: "get_garmin_week",
+      arguments: { startDate: "2026-10-19" },
+    });
+
+    const denied = withheld.includes("activities") ? "activities" : "dailies";
+
+    expect(review.structuredContent).toMatchObject({
+      data: {
+        complete: false,
+        missingDates,
+        unavailableCategories: withheld,
+        coverage: { [denied]: { availability: "permission_denied", counts: null } },
+        evidence: {
+          [denied]: { availability: "permission_denied", records: [], hasMore: false },
+        },
+      },
+    });
+    expect(JSON.stringify(review)).not.toContain(
+      denied === "activities" ? "hidden-run" : "dailies-2026-10-19",
+    );
+  },
+);
+
+it("withholds the whole week after revocation", async () => {
+  const id = crypto.randomUUID();
+  const { client, store } = await connect(id, ["HEALTH_EXPORT", "ACTIVITY_EXPORT"]);
+  await deliver({ dailies: dailiesOn(id, week) });
+  await store.revoke();
+
+  const review = await client.callTool({
+    name: "get_garmin_week",
+    arguments: { startDate: "2026-10-19" },
+  });
+
+  expect(review.structuredContent).toMatchObject({
+    data: {
+      complete: false,
+      missingDates: week,
+      unavailableCategories: summaryType.options,
+      coverage: { dailies: { availability: "permission_denied", counts: null } },
+    },
+  });
+});
+
+it("pages week evidence back to list_garmin_summaries over the same dates", async () => {
+  const id = crypto.randomUUID();
+  const { client } = await connect(id, ["ACTIVITY_EXPORT"]);
+  await deliver({
+    activities: ["a", "b", "c"].map((summaryId, index) => ({
+      userId: id,
+      summaryId,
+      activityId: index + 1,
+      calendarDate: week[index],
+    })),
+  });
+
+  const review = await client.callTool({
+    name: "get_garmin_week",
+    arguments: { startDate: "2026-10-19", limitPerType: 2 },
+  });
+
+  expect(review.structuredContent).toMatchObject({
+    data: {
+      coverage: { activities: { counts: { "2026-10-21": 1 } } },
+      evidence: {
+        activities: {
+          records: [{ summaryId: "a" }, { summaryId: "b" }],
+          hasMore: true,
+          nextOffset: 2,
+        },
+      },
+    },
+  });
+
+  const remaining = await client.callTool({
+    name: "list_garmin_summaries",
+    arguments: {
+      type: "activities",
+      startDate: "2026-10-19",
+      endDate: "2026-10-25",
+      offset: 2,
+    },
+  });
+
+  expect(remaining.structuredContent).toMatchObject({
+    data: { records: [{ summary: { summaryId: "c" } }], hasMore: false },
+  });
+});
+
+it("spans month, year and leap-day boundaries in calendar dates", async () => {
+  const { client } = await connect(crypto.randomUUID(), ["HEALTH_EXPORT"]);
+
+  for (const [startDate, dates] of [
+    [
+      "2026-12-29",
+      [
+        "2026-12-29",
+        "2026-12-30",
+        "2026-12-31",
+        "2027-01-01",
+        "2027-01-02",
+        "2027-01-03",
+        "2027-01-04",
+      ],
+    ],
+    [
+      "2028-02-26",
+      [
+        "2028-02-26",
+        "2028-02-27",
+        "2028-02-28",
+        "2028-02-29",
+        "2028-03-01",
+        "2028-03-02",
+        "2028-03-03",
+      ],
+    ],
+  ] as const) {
+    // oxlint-disable-next-line no-await-in-loop -- Each case is asserted on its own.
+    const review = await client.callTool({ name: "get_garmin_week", arguments: { startDate } });
+
+    expect(review.structuredContent).toMatchObject({
+      data: { startDate, endDate: dates[6], dates },
+    });
+  }
+});
+
+it.each([
+  { startDate: "2026-02-30" },
+  { startDate: "this week" },
+  { startDate: "2026-10-19", endDate: "2026-10-30" },
+  { startDate: "2026-10-19", userId: "another-account" },
+  { startDate: "2026-10-19", limitPerType: 0 },
+  { startDate: "2026-10-19", limitPerType: 101 },
+])("rejects invalid week inputs: %o", async (args) => {
+  const { client, fetcher } = await connect(crypto.randomUUID(), ["HEALTH_EXPORT"]);
+  expect((await client.callTool({ name: "get_garmin_week", arguments: args })).isError).toBe(true);
+  expect(fetcher).not.toHaveBeenCalled();
 });
