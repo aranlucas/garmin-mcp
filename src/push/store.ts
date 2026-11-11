@@ -17,7 +17,9 @@ import {
 
 type DataRow = { data: string };
 
-type ReceivedRow = DataRow & { received_at: number };
+type ReceivedRow = DataRow & { received_at: number; date: string };
+
+type CoverageRow = { type: SummaryType; date: string; count: number };
 
 type ValueRow = { value: number };
 
@@ -141,7 +143,7 @@ export class GarminUserData extends DurableObject<Env> {
   list(type: SummaryType, startDate: string, endDate: string, limit: number, offset: number) {
     const rows = this.ctx.storage.sql
       .exec<ReceivedRow>(
-        "SELECT data,received_at FROM summaries WHERE type=? AND date>=? AND date<=? ORDER BY date,id LIMIT ? OFFSET ?",
+        "SELECT data,received_at,date FROM summaries WHERE type=? AND date>=? AND date<=? ORDER BY date,id LIMIT ? OFFSET ?",
         type,
         startDate,
         endDate,
@@ -152,11 +154,25 @@ export class GarminUserData extends DurableObject<Env> {
 
     return {
       records: rows.slice(0, limit).map((row) => ({
+        date: row.date,
         receivedAt: new Date(row.received_at).toISOString(),
         summaryJSON: row.data,
       })),
       hasMore: rows.length > limit,
     };
+  }
+  /** Record counts per category and stored date, read with the revocation flag in one snapshot. */
+  coverage(types: readonly SummaryType[], startDate: string, endDate: string) {
+    const counts = this.ctx.storage.sql
+      .exec<CoverageRow>(
+        `SELECT type,date,COUNT(*) AS count FROM summaries WHERE type IN (${types.map(() => "?").join(",")}) AND date>=? AND date<=? GROUP BY type,date`,
+        ...types,
+        startDate,
+        endDate,
+      )
+      .toArray();
+
+    return { revoked: this.isRevoked(), counts };
   }
   get(type: SummaryType, id: string) {
     const row = this.ctx.storage.sql
