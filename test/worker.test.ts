@@ -109,6 +109,22 @@ function accountRequest(
   );
 }
 
+// Run before any test warms the Worker's signing-key cache.
+it("returns a service error when Auth signing keys cannot be fetched", async () => {
+  const config = bindings(null);
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 503 }));
+  vi.stubGlobal("fetch", fetcher);
+
+  const response = await accountRequest("resources/list", config, await jwt());
+
+  expect(fetcher.mock.calls.map(([input]) => requestUrl(input))).toEqual([
+    `${env.AUTH_ISSUER}/jwks`,
+  ]);
+  expect(response.status).toBe(503);
+  expect(response.headers.get("WWW-Authenticate")).toBeNull();
+  expect(config.AUTH.accessToken).not.toHaveBeenCalled();
+});
+
 it("lists and reads the authenticated Garmin account without another upstream lookup", async () => {
   const fetcher = vi.fn<typeof fetch>().mockImplementation((input) => {
     expect(requestUrl(input)).toBe(`${env.AUTH_ISSUER}/jwks`);
@@ -183,7 +199,7 @@ it.each(["resources/list", "resources/read"] as const)(
 );
 
 it.each([
-  { name: "disconnected", credential: null },
+  { name: "unavailable or unlinked", credential: null },
   {
     name: "expired",
     credential: { accessToken: "private-expired-token", expiresAt: 1, garminUserId: "old-account" },
@@ -203,8 +219,31 @@ it.each([
   const config = bindings(null);
   config.AUTH.accessToken.mockResolvedValue(credential);
   const response = await accountRequest("resources/read", config, await jwt());
-  expect(response.status).toBe(401);
-  expect(await response.text()).toBe("");
+  expect(response.status).toBe(503);
+  expect(response.headers.get("WWW-Authenticate")).toBeNull();
+  expect(response.headers.get("Cache-Control")).toBe("no-store");
+  expect(await response.json()).toEqual({
+    error:
+      "Garmin access is unavailable. Retry shortly. If Garmin is disconnected, reconnect it in Auth.",
+  });
+});
+
+it("does not challenge the MCP token when the Garmin broker throws", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() =>
+      Promise.resolve(Response.json({ keys: [{ ...jwk, kid: "fixture", alg: "RS256" }] })),
+    ),
+  );
+  const config = bindings(null);
+  config.AUTH.accessToken.mockRejectedValue(new Error("private broker failure"));
+
+  const response = await accountRequest("resources/list", config, await jwt());
+
+  expect(config.AUTH.accessToken).toHaveBeenCalledWith("auth-alice");
+  expect(response.status).toBe(500);
+  expect(response.headers.get("WWW-Authenticate")).toBeNull();
+  expect(await response.json()).toEqual({ error: "Internal server error" });
 });
 
 it("isolates account resources across HTTP callers and rechecks a disconnected link", async () => {
@@ -241,22 +280,30 @@ it("isolates account resources across HTTP callers and rechecks a disconnected l
   expect(aliceText + bobText).not.toContain("private-");
   config.AUTH.accessToken.mockResolvedValue(null);
   const disconnected = await accountRequest("resources/read", config, aliceToken);
-  expect(disconnected.status).toBe(401);
-  expect(await disconnected.text()).toBe("");
+  expect(disconnected.status).toBe(503);
+  expect(disconnected.headers.get("WWW-Authenticate")).toBeNull();
 });
 
 it("advertises shared Auth and rejects unauthenticated, legacy-key and retired issuer access", async () => {
-  const metadata = await (await send("/.well-known/oauth-protected-resource/mcp")).json();
+  const resourceMetadataPath = "/.well-known/oauth-protected-resource/mcp";
+  const metadata = await (await send(resourceMetadataPath)).json();
   expect(metadata).toMatchObject({
+    resource: `${base}/mcp`,
     authorization_servers: [env.AUTH_ISSUER],
     scopes_supported: ["garmin:access"],
+    bearer_methods_supported: ["header"],
   });
+  expect(await (await send("/.well-known/oauth-protected-resource")).json()).toEqual(metadata);
 
-  for (const init of [{}, { headers: { Authorization: "Bearer old-personal-key" } }]) {
-    const r = await send("/mcp", init);
-    expect(r.status).toBe(401);
-    expect(r.headers.get("WWW-Authenticate")).toContain("resource_metadata=");
-  }
+  const challenge = `Bearer resource_metadata="${base}${resourceMetadataPath}", scope="garmin:access"`;
+  const missing = await send("/mcp");
+  expect(missing.status).toBe(401);
+  expect(missing.headers.get("WWW-Authenticate")).toBe(challenge);
+
+  const legacy = await send("/mcp", { headers: { Authorization: "Bearer old-personal-key" } });
+  expect(legacy.status).toBe(401);
+  expect(legacy.headers.get("WWW-Authenticate")).toContain(challenge);
+  expect(legacy.headers.get("WWW-Authenticate")).toContain('error="invalid_token"');
 
   for (const path of [
     "/authorize",
@@ -394,9 +441,13 @@ it.each([
     fields: { aud: "https://auth.aranlucas.workers.dev" },
     status: 401,
   },
-  { name: "missing Garmin scope", fields: { scope: "email" }, status: 401 },
+  { name: "missing Garmin scope", fields: { scope: "email" }, status: 403 },
   { name: "wrong issuer", fields: { iss: "https://other.example" }, status: 401 },
-  { name: "expired subject lifetime", fields: { exp: 1 }, status: 401 },
+  {
+    name: "expired subject lifetime",
+    fields: { iat: Math.floor(Date.now() / 1000) - 120, exp: Math.floor(Date.now() / 1000) - 60 },
+    status: 401,
+  },
   // A sender-constrained token must not be replayable as a plain bearer token.
   { name: "a DPoP key binding", fields: { cnf: { jkt: "fixture-thumbprint" } }, status: 401 },
   { name: "a malformed scope claim", fields: { scope: "garmin:access  email" }, status: 401 },
@@ -435,7 +486,7 @@ it.each([
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `bearer ${token}`,
         "Content-Type": "application/json",
         Accept: "application/json, text/event-stream",
       },
@@ -444,7 +495,20 @@ it.each([
     config,
   );
 
+  const challenge = response.headers.get("WWW-Authenticate");
+
+  const expectedParameters: unknown = expect.arrayContaining([
+    expect.stringMatching(/^Bearer /),
+    expect.stringContaining(`resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`),
+    expect.stringContaining('scope="garmin:access"'),
+    expect.stringContaining(
+      status === 403 ? 'error="insufficient_scope"' : 'error="invalid_token"',
+    ),
+    expect.stringContaining("error_description="),
+  ]);
+
   expect(response.status).toBe(status);
+  expect(challenge?.split(", ") ?? []).toEqual(status === 200 ? [] : expectedParameters);
   expect(config.AUTH.accessToken.mock.calls).toEqual(status === 200 ? [["auth-alice"]] : []);
   expect((await response.text()).includes('"list_garmin_summaries"')).toBe(status === 200);
 });

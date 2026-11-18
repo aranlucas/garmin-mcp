@@ -76,27 +76,26 @@ site.get("/training/privacy", (c) => c.redirect("/privacy", 308));
 site.post("/garmin/disconnect", (c) => purgeUser(c.req.raw, c.env));
 
 site.all("/mcp", async (c) => {
-  const userId = await authenticate(c.req.raw, c.env);
+  const auth = await authenticate(c.req.raw, c.env);
 
-  const unauthorized = () =>
-    new Response(null, {
-      status: 401,
-      headers: {
-        "WWW-Authenticate": `Bearer resource_metadata="${c.env.PUBLIC_URL}/.well-known/oauth-protected-resource/mcp", scope="${GARMIN_SCOPE}"`,
-        "Cache-Control": "no-store",
-      },
-    });
-
-  if (!userId) {
-    return unauthorized();
+  if (auth.response) {
+    return auth.response;
   }
 
+  const { userId } = auth;
   // SAFETY: AUTH is the private GarminTokens Worker entrypoint; its reply is schema-checked below.
   const broker = c.env.AUTH as AuthBroker;
   const credential = garminCredential.safeParse(await broker.accessToken(userId));
 
   if (!credential.success || credential.data.expiresAt <= Date.now()) {
-    return unauthorized();
+    return c.json(
+      {
+        error:
+          "Garmin access is unavailable. Retry shortly. If Garmin is disconnected, reconnect it in Auth.",
+      },
+      503,
+      { "Cache-Control": "no-store" },
+    );
   }
 
   const { accessToken, garminUserId } = credential.data;
