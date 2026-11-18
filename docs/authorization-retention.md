@@ -16,7 +16,7 @@ Confirmed disconnect uses the existing authenticated `/garmin/disconnect` contro
 
 Both background file retrieval and event authorization use this classifier. Broker exceptions and failed permission HTTP requests are unavailable. In particular, `401` may mean an expired token, and a failed lookup does not supply a current permission list. A successful list that omits the required permission remains a denial. Local revocation/permission tombstones remain checked around asynchronous work.
 
-The request-level `/mcp` boundary still returns HTTP 401 for unavailable credentials. An event subscription that reaches its authorization check without a usable broker credential returns the existing temporary-authorization protocol error (`-32603`), rather than treating null as a confirmed forbidden state (`-32012`). No successful response or private data is fabricated during an outage.
+The request-level `/mcp` boundary returns HTTP 503 with retry and Garmin relinking guidance when the broker supplies no usable credential. OAuth challenges at this boundary concern the MCP bearer token and its scope. An event subscription that reaches its authorization check without a usable broker credential returns the temporary-authorization protocol error (`-32603`).
 
 ## File state and recovery
 

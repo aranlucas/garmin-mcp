@@ -14,7 +14,7 @@ Auth handles client registration, PKCE, consent, access/refresh tokens, and Garm
 
 `resources/list` advertises the read-only `garmin://account` resource with MIME type `application/json`. Read it through `resources/read` with `{"uri":"garmin://account"}` to obtain `{"userId":"<immutable Garmin User ID>"}`. This is Garmin's `userID` for developer-portal requests such as an Activity File resend, not the Auth subject, display name, email address, activity ID, or a credential.
 
-The ID comes from the linked account validated on the authenticated `/mcp` request; no account selector or extra Garmin lookup is accepted. It returns no credentials or profile fields, and its cache hint is private with zero lifetime. Unauthenticated, invalid or disconnected requests receive HTTP 401; a server missing linked-account identity returns a fixed resource-unavailable error. Reconnect Garmin in Auth if the account is unavailable.
+The ID comes from the linked account validated on the authenticated `/mcp` request; no account selector or extra Garmin lookup is accepted. It returns no credentials or profile fields, and its cache hint is private with zero lifetime. Missing or rejected MCP bearer credentials receive a `401` OAuth challenge. A valid token missing `garmin:access` receives a `403` scope challenge. If Auth supplies no usable Garmin credential, `/mcp` returns `503`. Retry shortly, or reconnect Garmin in Auth if the account is disconnected.
 
 ## Tools and data availability
 

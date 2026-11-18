@@ -1,5 +1,7 @@
 import { oauthProviderResourceClient } from "@better-auth/oauth-provider/resource-client";
+import { isAPIError } from "better-auth/api";
 import { createAuthClient } from "better-auth/client";
+import { parseAccessTokenAuthorization } from "better-auth/oauth2";
 import { env as workerEnv } from "cloudflare:workers";
 import { z } from "zod";
 
@@ -14,16 +16,29 @@ const authClient = createAuthClient({
 
 const claims = z.object({ sub: z.string().min(1).max(255) });
 
-/** The Auth subject of a valid `garmin:access` bearer token for this resource, otherwise null. */
-export async function authenticate(request: Request, env: Env) {
-  const authorization = request.headers.get("Authorization");
+function bearerChallenge(env: Env, invalidToken = false) {
+  const discovery = `Bearer resource_metadata="${env.PUBLIC_URL}/.well-known/oauth-protected-resource/mcp", scope="${GARMIN_SCOPE}"`;
 
-  if (!authorization?.startsWith("Bearer ")) {
-    return null;
+  const challenge = invalidToken
+    ? `${discovery}, error="invalid_token", error_description="The MCP access token is invalid or expired."`
+    : discovery;
+
+  return new Response(null, {
+    status: 401,
+    headers: { "WWW-Authenticate": challenge, "Cache-Control": "no-store" },
+  });
+}
+
+/** Verify the MCP bearer token and retain the distinction between authentication and scope errors. */
+export async function authenticate(request: Request, env: Env) {
+  const authorization = parseAccessTokenAuthorization(request.headers.get("Authorization"));
+
+  if (authorization?.scheme !== "Bearer") {
+    return { response: bearerChallenge(env) };
   }
 
   try {
-    const payload = await authClient.verifyBearerToken(authorization.slice(7), {
+    const payload = await authClient.verifyBearerToken(authorization.token, {
       jwksUrl: `${env.AUTH_ISSUER}/jwks`,
       verifyOptions: {
         issuer: env.AUTH_ISSUER,
@@ -34,9 +49,29 @@ export async function authenticate(request: Request, env: Env) {
       requiredScopes: [GARMIN_SCOPE],
     });
 
-    return claims.parse(payload).sub;
-  } catch {
-    return null;
+    const subject = claims.safeParse(payload);
+
+    return subject.success
+      ? { userId: subject.data.sub }
+      : { response: bearerChallenge(env, true) };
+  } catch (error) {
+    if (isAPIError(error) && error.status === "FORBIDDEN") {
+      const headers = new Headers(error.headers);
+      headers.set("Cache-Control", "no-store");
+
+      return { response: new Response(null, { status: 403, headers }) };
+    }
+
+    if (isAPIError(error) && error.status === "UNAUTHORIZED") {
+      return { response: bearerChallenge(env, true) };
+    }
+
+    return {
+      response: Response.json(
+        { error: "Auth could not verify the MCP access token. Retry shortly." },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
+      ),
+    };
   }
 }
 
